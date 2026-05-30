@@ -1,0 +1,21 @@
+# 项目级 Codex 配置示例
+# 说明：
+# - 该文件只有在项目被信任时才会生效
+# - 这里沿用 Java 版 EventHub 的最小必要配置，避免过度复杂
+# - 具体运行时权限仍以当前 Codex 会话和用户确认结果为准
+
+model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
+personality = "pragmatic"
+
+# 推荐开发期使用：
+# - on-request：需要时再审批，比较适合本地交互开发
+approval_policy = "on-request"
+
+# 推荐开发期使用：
+# - workspace-write：允许在当前工作区写文件，但仍然受沙箱限制
+sandbox_mode = "workspace-write"
+
+# Windows 原生模式下可参考官方文档启用 elevated：
+# [windows]
+# sandbox = "elevated"
