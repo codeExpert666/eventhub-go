@@ -32,7 +32,43 @@ Before editing code, summarize:
 - important assumptions
 - risks
 
-## Step 2: Design Before Implementation
+## Step 2: Structure Conformance Check
+
+### Structure conformance check
+
+Before design and implementation, confirm which layers this change touches:
+- cmd
+- app
+- config
+- platform
+- http/router
+- http/middleware
+- http/handler
+- http/dto
+- http/response
+- http/validation
+- apperror
+- page
+- domain
+- service
+- repository interface
+- repository/mysql
+- repository/mysql/queries
+- repository/mysql/sqlc
+- security
+- api/openapi
+- migrations
+- configs
+- docs
+
+Required output for this check:
+- The design note must state the directories touched and the directories explicitly not touched.
+- If creating directories or moving packages, explain why.
+- If deviating from the AGENTS.md package layout, explain why and add or update an ADR.
+- After implementation, the implementation note must list file moves and package boundary changes.
+- The final "Risks / follow-ups" summary must state whether any structure debt remains.
+
+## Step 3: Design Before Implementation
 Produce a concise design that covers:
 - domain objects
 - API endpoints or message contracts
@@ -44,7 +80,7 @@ Produce a concise design that covers:
 - Java-Go parity expectations
 - testing strategy
 
-## Step 3: Document The Design
+## Step 4: Document The Design
 Before writing the design note, read and follow:
 - `docs/templates/design-template.md`
 
@@ -56,7 +92,7 @@ Suggested filename:
 
 Keep the same section order as the template unless the task clearly needs a different structure. If the structure changes, explain why in the document.
 
-## Step 4: Implement The Smallest Viable Slice
+## Step 5: Implement The Smallest Viable Slice
 Make the smallest change set that closes the target loop.
 
 Respect the Go layering boundary:
@@ -66,7 +102,7 @@ Do not let handlers access database/sql, sqlc queries, or transaction handles di
 Do not use `panic` for business errors.
 Do not put roles, email, username, or user status into JWT claims.
 
-## Step 5: Verify
+## Step 6: Verify
 Run the smallest relevant verification that is feasible in the current repository:
 - `gofmt` for changed Go files
 - `go test ./...` when a Go module exists
@@ -79,7 +115,7 @@ Run the smallest relevant verification that is feasible in the current repositor
 
 If a command is not applicable, record the reason.
 
-## Step 6: Document Implementation
+## Step 7: Document Implementation
 Before writing the implementation note, read and follow:
 - `docs/templates/implementation-note-template.md`
 
@@ -97,7 +133,7 @@ The implementation note must answer:
 5. What validation was performed
 6. What limitations / next steps remain
 
-## Step 7: Document Java-Go Parity
+## Step 8: Document Java-Go Parity
 Before finishing, check whether the change affects Java-Go parity.
 
 Read and update when applicable:
@@ -121,7 +157,7 @@ Each parity update should record:
 
 If no parity update is needed, say why in the implementation note or final verification summary.
 
-## Step 8: ADR When Needed
+## Step 9: ADR When Needed
 If the task introduces a meaningful architectural or engineering trade-off, first read:
 - `docs/templates/adr-template.md`
 

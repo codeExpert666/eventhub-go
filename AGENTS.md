@@ -98,7 +98,160 @@ Java-Go parity matrix 更新要求：
 - 不擅自引入重量级依赖；需要引入时必须在设计文档或 ADR 中解释收益和代价。
 - Go 代码必须执行 `gofmt`。
 
-## 7. API、错误码、数据与 JWT 约束
+## 7. Go 项目目录结构规范
+
+### 7.1 总原则
+- 本项目采用 Go 生态自然写法复刻 Java 版 EventHub 的业务语义和工程质量。
+- 目录结构服务于长期演进，不追求 Spring Boot 目录的逐行翻译。
+- 后续代码必须遵守：`handler -> service -> repository -> sqlc/database`。
+- `handler` 只处理 HTTP 入参、认证上下文读取、调用 service、写响应。
+- `service` 承载业务用例、事务边界、权限后的业务规则、并发一致性策略。
+- `repository` 定义持久化接口。
+- `repository/mysql` 包装 sqlc generated code。
+- sqlc generated model 不等于 domain model，不能直接向 handler 泄漏。
+- `domain` 不能依赖 HTTP、sqlc、database、redis、config。
+- `platform` 只放跨业务基础设施能力，例如 db、redis、log、clock、idgen、crypto。
+- `security` 只放认证、安全上下文、密码、JWT、refresh token、user agent 摘要等安全基础能力。
+- `docs/ai` 是工程质量的一部分，不是事后补充。
+
+### 7.2 规范目录结构
+
+长期目标目录结构如下：
+
+```text
+eventhub-go/
+  cmd/
+    eventhub/
+      main.go
+
+  internal/
+    app/
+      bootstrap.go
+      lifecycle.go
+
+    config/
+      config.go
+      env.go
+      profile.go
+
+    platform/
+      clock/
+      db/
+      redis/
+      log/
+      idgen/
+      crypto/
+
+    http/
+      router.go
+      server.go
+      middleware/
+      handler/
+      dto/
+      response/
+      validation/
+
+    apperror/
+      code.go
+      error.go
+      mapper.go
+
+    page/
+      page_request.go
+      page_response.go
+
+    domain/
+      user/
+      auth/
+      common/
+
+    service/
+      auth/
+      user/
+      system/
+
+    repository/
+      user_repository.go
+      auth_session_repository.go
+      mysql/
+        queries/
+        sqlc/
+
+    security/
+      principal.go
+      password/
+      jwt/
+      refresh/
+      useragent/
+
+  api/
+    openapi/
+
+  migrations/
+  configs/
+  docs/
+    ai/
+      design/
+      implementation/
+      adr/
+      parity/
+    templates/
+```
+
+### 7.3 阶段化落地原则
+- 不要为了“看起来完整”创建空 Go package。
+- 当前阶段没有实现的业务包，不要创建空 `.go` 文件。
+- 允许使用 `.gitkeep` 或 `README.md` 作为非 Go 目录占位，但不要制造无法编译或无意义 package。
+- 一旦某个功能阶段开始，例如 auth、user、event、order，就必须按规范补齐对应 `domain`、`service`、`repository`、`handler`、`dto`、`security` 或 `platform` 目录。
+- 新增数据库访问时：
+  - SQL 文件放 `internal/repository/mysql/queries/`。
+  - sqlc generated code 放 `internal/repository/mysql/sqlc/`。
+  - repository interface 放 `internal/repository/`。
+  - MySQL 实现放 `internal/repository/mysql/`。
+  - migration 放 `migrations/`。
+  - `sqlc.yaml` 放项目根目录，除非 ADR 另有说明。
+- 新增 OpenAPI 时：
+  - 契约文件放 `api/openapi/eventhub.yaml`。
+  - 生成代码放 `api/openapi/gen/`。
+  - 生成代码不能污染 domain model。
+- 新增配置示例时：
+  - 放 `configs/*.env.example`。
+- 新增文档时：
+  - 设计文档放 `docs/ai/design/`。
+  - 实现说明放 `docs/ai/implementation/`。
+  - ADR 放 `docs/ai/adr/`。
+  - Java-Go parity 放 `docs/ai/parity/`。
+
+### 7.4 每次生成代码前的结构检查清单
+在创建或修改代码前，Codex 必须先判断：
+- 这是 HTTP 传输层代码吗？如果是，放 `internal/http`。
+- 这是请求/响应 DTO 吗？如果是，放 `internal/http/dto`。
+- 这是业务用例吗？如果是，放 `internal/service/<domain>`。
+- 这是领域模型或枚举吗？如果是，放 `internal/domain/<domain>` 或 `internal/domain/common`。
+- 这是 repository interface 吗？如果是，放 `internal/repository`。
+- 这是 MySQL repository 实现吗？如果是，放 `internal/repository/mysql`。
+- 这是 sqlc query 吗？如果是，放 `internal/repository/mysql/queries`。
+- 这是 sqlc generated code 吗？如果是，放 `internal/repository/mysql/sqlc`。
+- 这是密码、JWT、refresh token、安全上下文吗？如果是，放 `internal/security`。
+- 这是跨业务基础设施吗？如果是，放 `internal/platform`。
+- 这是应用装配吗？如果是，放 `internal/app`。
+- 这是可执行入口吗？如果是，只能放 `cmd/eventhub/main.go`。
+
+### 7.5 禁止偏离规则
+- 不要把业务逻辑写进 `cmd/eventhub/main.go`。
+- 不要让 handler 直接访问 sqlc、`database/sql`、redis。
+- 不要让 domain 依赖 HTTP DTO。
+- 不要让 domain 依赖 sqlc generated model。
+- 不要在 platform 中放业务规则。
+- 不要在 `repository/mysql` 中做 HTTP 错误响应。
+- 不要在 service 中拼 HTTP JSON。
+- 不要为了少写文件而把 handler、service、repository 混在一个文件。
+- 不要把 request DTO 当 domain model 长期使用。
+- 不要用 `panic` 表达业务错误。
+- 不要把角色、邮箱、用户名、用户状态写入 JWT。
+- 不要新增功能后忘记更新 `docs/ai` 和 parity matrix。
+
+## 8. API、错误码、数据与 JWT 约束
 - API 路径、请求字段、响应字段、分页语义和错误码必须优先对齐 Java 版现有契约。
 - 统一错误响应需要可稳定表达 `code`、`message`、`requestId` 等语义；字段名以设计文档为准。
 - 数据库表、字段、索引、唯一约束和状态值应与 Java 版模型保持可迁移的一致性。
@@ -106,7 +259,7 @@ Java-Go parity matrix 更新要求：
 - JWT 只能放稳定身份与技术性 token claim，例如用户 ID / `sub`、`sid`、`jti`、`typ`、`iss`、`iat`、`exp` 等。
 - 不要把角色、邮箱、用户名、用户状态写入 JWT；这些动态权限和用户属性必须在服务端查询或通过受控缓存获得。
 
-## 8. 质量门禁
+## 9. 质量门禁
 每次完成后运行当前仓库可行的验证命令，并在总结中写明结果。Go 版质量门禁包括：
 
 - `gofmt`：所有 Go 文件必须格式化。
@@ -120,7 +273,7 @@ Java-Go parity matrix 更新要求：
 
 如果某项验证暂不可运行，必须说明原因，例如当前还没有 `go.mod`、没有 migration 工具或没有 OpenAPI 文件。
 
-## 9. 后端设计偏好
+## 10. 后端设计偏好
 这是活动预约与票务平台，优先关注以下问题：
 
 - 用户与权限
@@ -133,7 +286,7 @@ Java-Go parity matrix 更新要求：
 - 缓存使用边界
 - 可观测性与后续微服务拆分边界
 
-## 10. 测试与验证要求
+## 11. 测试与验证要求
 每次实现都要说明至少需要哪些验证：
 
 - 单元测试
@@ -144,7 +297,7 @@ Java-Go parity matrix 更新要求：
 - 并发或幂等验证，如果相关
 - 与 Java 版契约的 parity 验证，如果相关
 
-## 11. 输出风格
+## 12. 输出风格
 每次完成任务后，请按以下结构总结：
 
 1. 设计摘要
@@ -155,7 +308,7 @@ Java-Go parity matrix 更新要求：
 6. 已更新的文档列表
 7. 验证结果
 
-## 12. 当上下文不足时
+## 13. 当上下文不足时
 - 先基于当前 Go 仓库和 Java 版仓库推断。
 - 明确写出假设。
 - 尽量先给可执行的最小方案。

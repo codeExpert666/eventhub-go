@@ -11,6 +11,7 @@ Java 版参考项目：
 ## 状态说明
 
 - `已对齐`：Go 版已经建立对应规则、文档或实现。
+- `已决策`：Go 版已经通过设计文档或 ADR 固化方向，但当前阶段可能尚未完成全部代码落地。
 - `规则已初始化`：Go 版已写入约束，但尚未有业务代码可验证。
 - `待迁移`：Java 版已有能力，Go 版尚未实现。
 - `待决策`：Go 版需要 ADR 或设计文档明确技术选择。
@@ -29,6 +30,7 @@ Java 版参考项目：
 | docs/ai 目录 | `docs/ai/design`、`implementation`、`adr` | 同名目录加 `parity` | 已对齐 | Go 版增加 `parity`，用于持续记录双端差异；README 已补齐 parity 的定位、触发条件、记录字段、状态值和与其他文档的关系。 |
 | 工程纪律 ADR | 多份 Java ADR | `docs/ai/adr/0001-go-port-engineering-discipline.md` | 已对齐 | 明确 Go 版长期迁移纪律。 |
 | 分层边界 | Java `controller / service / mapper / domain` | Go `handler -> service -> repository -> sqlc/database` | 规则已初始化 | 后续业务代码必须按此边界实现。 |
+| Go package layout / 项目目录结构 | Java Controller / Service / Mapper / Entity / Config / Security 等分层 | Go `cmd` + `internal/app` + `internal/http` + `internal/service` + `internal/repository` + `internal/domain` + `internal/platform` + `internal/security` | 已决策 | Go 版不逐行复刻 Spring Boot，而是用 Go package、`internal`、constructor injection、显式 router 和 repository interface 表达同等边界；当前不为未开始业务创建空 Go package。参考 `docs/ai/design/002-project-structure-alignment.md`、`docs/ai/adr/0005-go-project-package-layout.md`、`docs/ai/implementation/002-project-structure-alignment.md`。 |
 | 业务错误 | Java `BusinessException` / `ErrorCode` | Go 显式错误类型 / 错误码映射 | 待迁移 | 未来实现时对齐 Java 错误码和响应结构，不用 `panic` 表达业务错误。 |
 | API 契约 | Java controller / OpenAPI / MockMvc 测试 | Go handler / OpenAPI / HTTP 测试 | 待迁移 | 后续每个 API 设计需对照 Java 路径、字段、状态码和错误码。 |
 | 数据库模型 | Java migration / mapper / entity | Go migration / sqlc / repository | 待迁移 | 后续表、字段、索引、唯一约束和状态值需对齐 Java 版。 |

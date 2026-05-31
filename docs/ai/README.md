@@ -38,6 +38,14 @@ YYYY-MM-DD-主题.md
 5. Parity 文档要讲清楚 Java 来源、Go 目标、当前状态和差异原因。
 6. 非微小修改必须更新本目录下对应文档。
 
+## 目录结构与文档联动
+
+- 目录结构变化属于非微小修改。
+- 移动 package、拆分层次、引入 repository/sqlc/openapi/migrations，都必须更新设计文档和 implementation note。
+- 长期结构规范以 `AGENTS.md` 为准。
+- 关键 package layout 决策以 ADR 为准。
+- parity matrix 要记录 Java 分层到 Go 目录的映射。
+
 ## Parity 文档约定
 
 Parity 文档不是设计文档、实现说明或 ADR 的替代品，而是 Java-Go 对齐状态的索引和台账。
