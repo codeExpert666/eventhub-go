@@ -1,93 +1,116 @@
-# Go 项目目录结构规范实现说明
+# Go 项目结构规范化重构实现说明
 
 ## 1. 本次改动解决了什么问题
 
-本次改动解决了 Go 版 EventHub 后续生成代码时缺少明确 package layout 约束的问题。
+本次改动把上一阶段已经写入规则和 ADR 的 Go package layout 从“文档约束”推进到“运行时代码实际落地”。
 
-在 HTTP foundation 已完成、业务模块和数据库尚未迁移的阶段，先把长期目录结构、分层职责、阶段化落地原则和禁止偏离规则写入 `AGENTS.md`、backend-design-first skill、docs/ai README、ADR 和 parity matrix，避免后续实现 auth/user/event/order/payment 时出现 handler 直连数据库、domain 依赖 sqlc model、业务逻辑散落在入口文件或为了凑结构创建空 Go package 等问题。
+重构前，`cmd/eventhub/main.go` 同时承担配置加载、日志初始化、signal handling 和 HTTP server 装配；system handler 直接持有 config 并组装 ping/echo/info/health 响应；system HTTP DTO 定义在 handler 文件内；request id 位于 `internal/http/requestid`，不利于后续日志、追踪、response、recover 等跨 HTTP 子包复用；`response`、`apperror`、`page` 也都集中在单文件中。
+
+本次将这些职责拆到长期规范目录中，同时保持现有 API 路径、统一响应字段、错误码、requestId、分页和测试意图不变。
 
 ## 2. 改动内容
-- 新增了本次设计文档：
-  - `docs/ai/design/002-project-structure-alignment.md`
-- 更新了项目级协作规则：
-  - `AGENTS.md`
-  - 新增“Go 项目目录结构规范”，包含总原则、规范目录结构、阶段化落地原则、生成代码前结构检查清单和禁止偏离规则。
-- 更新了 backend-design-first skill：
-  - `.agents/skills/backend-design-first/SKILL.md`
-  - 在 Understand and scope 之后新增 `Structure conformance check`，要求设计前列出涉及目录、不涉及目录、目录移动原因、ADR 要求和结构债务说明。
-- 更新了 docs/ai 目录说明：
-  - `docs/ai/README.md`
-  - 新增“目录结构与文档联动”，说明目录结构变化属于非微小修改，并要求 package layout 决策和 Java-Go 目录映射进入 ADR 与 parity matrix。
-- 新增了 package layout ADR：
-  - `docs/ai/adr/0005-go-project-package-layout.md`
-  - 状态为 accepted，记录采用混合式 Go package layout 的原因、备选方案和影响。
-- 更新了 Java-Go parity matrix：
-  - `docs/ai/parity/java-go-parity-matrix.md`
-  - 新增 `已决策` 状态说明。
-  - 新增 `Go package layout / 项目目录结构` 行，记录 Java Controller / Service / Mapper / Entity / Config / Security 到 Go `cmd`、`internal/app`、`internal/http`、`internal/service`、`internal/repository`、`internal/domain`、`internal/platform`、`internal/security` 的映射。
-- 文件移动和 package 边界变化：
-  - 本次没有移动任何 Go 文件。
-  - 本次没有新建空 Go package。
-  - 本次没有改变现有运行时 package 边界，只新增和更新文档规则。
+- 新增了应用装配层：
+  - `internal/app/bootstrap.go`
+  - `internal/app/lifecycle.go`
+  - `cmd/eventhub/main.go` 现在只调用 `app.Run()` 并处理最终退出状态。
+- 拆分了配置包：
+  - `internal/config/config.go`：`Config`、`LogConfig`、`Load`、`Addr`。
+  - `internal/config/env.go`：环境变量读取、正整数解析、日志级别解析。
+  - `internal/config/profile.go`：`dev/test/prod`、`ActiveProfiles`、环境标准化。
+  - 保持 `EVENTHUB_APP_NAME`、`EVENTHUB_ENV`、`EVENTHUB_HTTP_PORT`、`EVENTHUB_VERSION`、`EVENTHUB_LOG_LEVEL` 兼容。
+- 迁移了 request id：
+  - 删除 `internal/http/requestid/requestid.go` 和对应测试。
+  - 新增 `internal/platform/idgen/request_id.go` 和 `request_id_test.go`。
+  - 对外函数改为 `HeaderRequestID`、`NewRequestID`、`ValidRequestID`、`WithRequestID`、`RequestIDFromContext`。
+  - 更新 middleware、recover、response 和 HTTP 测试 import。
+- 拆分了统一响应包：
+  - `internal/http/response/api_response.go`：`APIResponse`、`Success`、`Failure`。
+  - `internal/http/response/writer.go`：`WriteSuccess`、`WriteError`、`WriteStatus`、`WriteJSON`。
+  - `data` 字段不加 `omitempty`，保持 `data:null` 可见。
+- 拆分了应用错误包：
+  - `internal/apperror/code.go`：`Code`、错误码、默认消息和 HTTP status。
+  - `internal/apperror/error.go`：`AppError`、`New`、`WithData`、`Wrap`、`Error`、`Unwrap`、访问器。
+  - `internal/apperror/mapper.go`：`FromError`、`normalizeCode`。
+- 拆分了分页包：
+  - `internal/page/page_request.go`：分页常量、`Request`、`NewRequest`、`DefaultRequest`、`Offset`。
+  - `internal/page/page_response.go`：`Response[T]`、`NewResponse`、`totalPages` 计算。
+- 新增了 system DTO 和 service：
+  - `internal/http/dto/system_dto.go`：`EchoRequest`、`PingResponse`、`EchoResponse`、`HealthResponse`、`InfoResponse` 等 HTTP data 契约。
+  - `internal/service/system/service.go`：`Service`、`EchoCommand`、service result 类型和 ping/echo/health/info 组装逻辑。
+  - `internal/platform/clock/clock.go`：`Clock` interface 和 `RealClock`。
+  - `internal/http/handler/system_handler.go` 改为 decode/validate DTO、调用 service、映射 service result 到 HTTP DTO。
+- 新增了阶段可用工程资产：
+  - `README.md`
+  - `Makefile`
+  - `.golangci.yml`
+  - `configs/dev.env.example`
+  - `configs/test.env.example`
+  - `configs/prod.env.example`
+  - `api/openapi/.gitkeep`
+  - `migrations/.gitkeep`
+- 未创建的未来阶段目录：
+  - 没有创建 `internal/domain`、`internal/repository`、`internal/security`、`internal/platform/db`、`internal/platform/redis` 等空 Go package。
+  - 没有创建 `sqlc.yaml`、Dockerfile、docker-compose.yml 或 OpenAPI 契约文件。
 - 是否更新 Java-Go parity 记录：
-  - 已更新。目录结构规范属于 Java 分层到 Go package layout 的刻意差异和长期工程决策，触发 parity matrix 更新条件。
+  - 已更新。项目结构从规则状态进入部分代码落地状态，且 system Java Controller/Service/DTO/VO 语义映射到 Go handler/service/dto，触发 parity matrix 更新。
 
 ## 3. 为什么这样设计
-- 目录规范写入 `AGENTS.md`，是为了让项目级持久规则直接约束后续所有 Codex 任务。
-- 结构检查写入 backend-design-first skill，是为了让每次设计和实现前先判断代码应落在哪一层，而不是实现后再补救。
-- `docs/ai/README.md` 补充目录结构与文档联动，是为了明确移动 package、拆分层次、引入 repository/sqlc/openapi/migrations 都不是微小修改，必须留下设计和实现记录。
-- 单独新增 ADR，是因为 package layout 会长期影响 auth/user/event/order/payment、数据库、OpenAPI 和安全模块的组织方式，属于架构级取舍。
-- parity matrix 新增映射行，是为了记录 Go 版不逐行复刻 Spring Boot，而是用 Go package、`internal`、constructor injection、显式 router 和 repository interface 表达同等边界。
-- 不创建空 Go package，是为了保持当前仓库可编译、可读、可演进，避免只有目录形状但没有业务含义的 package。
+- `internal/app` 承接进程装配和生命周期，让 `cmd/eventhub/main.go` 保持最薄入口，避免后续业务或基础设施初始化散落在 main。
+- `internal/config` 拆分后，配置结构、环境变量读取和 profile 派生各自独立，但对外仍通过 `config.Load()` 和 `Config` 使用，兼容现有调用方。
+- request id 上移到 `internal/platform/idgen`，是因为它已经被 middleware、recover、response、日志和测试共同依赖，不再只是 HTTP 子目录内部工具。
+- `internal/http/dto` 承载 system HTTP data 契约，落实 ADR-0006 的 DTO / VO 边界；service 不依赖 DTO，避免传输层类型渗入业务用例。
+- `internal/service/system` 对齐 Java `SystemService` 的职责，把 ping/echo/info/health 的非 HTTP 组装逻辑从 handler 中挪出。
+- `Clock` interface 是小而明确的抽象，未来 system service 单元测试可以替换固定时间；当前 response envelope timestamp 仍由 response 包使用 `time.Now()`，因为它属于统一响应写出时刻，后续如需统一时钟可另行设计。
+- `response`、`apperror`、`page` 拆分为职责文件，不改变 package 名和对外 API，降低后续新增错误码、writer 或分页能力时的文件膨胀。
+- `README.md`、`Makefile`、配置示例和 `.gitkeep` 只提供当前阶段可用或明确保留的落点；不创建当前无法验证的 Docker/sqlc/OpenAPI 骨架。
 
 ## 4. 替代方案
-- 方案 A：只在 `AGENTS.md` 中写目录规范。
-  - 没有采用，因为每次执行任务时还需要 skill 级的结构检查步骤，否则规则容易停留在静态文档里。
-- 方案 B：直接创建完整目标目录和空 `.go` 文件。
-  - 没有采用，因为当前阶段尚未实现这些业务包；空 Go package 会增加无意义编译单元，也违背阶段化落地原则。
-- 方案 C：采用完全横向分层。
-  - 没有采用，因为业务变多后容易出现包过宽，但保留核心横向层仍有利于 Java-Go parity 对照。
-- 方案 D：采用完全纵向 modules。
-  - 没有采用，因为当前迁移阶段需要清晰对照 Java Controller / Service / Mapper / Entity / Security，完全纵向 modules 会降低学习和审查直观性。
-- 方案 E：不新增 ADR，只在设计文档中说明。
-  - 没有采用，因为 package layout 是长期工程决策，后续偏离也要有 ADR 索引。
+- 方案 A：只更新文档，不改运行时代码。
+  - 没有采用，因为本次目标是结构规范化重构，必须把关键目录和包边界实际落地。
+- 方案 B：一次性创建完整长期目录和空 Go 文件。
+  - 没有采用，因为当前没有真实 domain/repository/security/db/redis 代码，空 package 会增加无意义编译单元。
+- 方案 C：system handler 继续直接持有 config 并组装响应。
+  - 没有采用，因为 Java 版已有 `SystemController -> SystemService` 边界，Go 版也需要在当前最小模块中验证 handler/service 分工。
+- 方案 D：service 直接使用 `internal/http/dto`。
+  - 没有采用，因为这会让 service 依赖 HTTP 传输层，破坏 DTO 边界和后续复用能力。
+- 方案 E：立即创建 Dockerfile、docker-compose.yml、sqlc.yaml。
+  - 没有采用，因为当前没有数据库、SQL、migration 或容器运行约束；创建不可执行骨架会误导后续验证。
 
 ## 5. 测试与验证
 - 跑了哪些测试：
   - `go test ./...`：通过。
-  - `go vet ./...`：通过。
+  - `make test`：通过，内部执行 `go test ./...`。
 - 跑了哪些质量门禁：
-  - `grep -R "handler -> service -> repository" AGENTS.md .agents/skills docs/ai`：通过，确认分层规则仍可检索。
-  - `grep -R "Go 项目目录结构规范" AGENTS.md`：通过，确认 AGENTS 已新增章节。
-  - `grep -R "Structure conformance check" .agents/skills/backend-design-first/SKILL.md`：通过，确认 skill 已新增结构检查步骤。
+  - `gofmt -w .`：通过。
+  - `go vet ./...`：通过。
+  - `make fmt`：通过，内部执行 `gofmt -w .`。
+  - `make vet`：通过，内部执行 `go vet ./...`。
   - `git diff --check`：通过，无空白错误。
-  - `gofmt`：不适用，本次没有修改 Go 文件。
-  - `sqlc generate`：不适用，本次没有 SQL、schema 或 sqlc 配置变化。
-  - migration 测试：不适用，本次没有 migration 变化。
-  - OpenAPI validate：不适用，本次没有 API 契约变化。
-- 手工验证了哪些场景：
-  - 复查 `AGENTS.md`，确认保留原有 Java-Go parity、JWT claim、质量门禁和 7 项总结规则。
-  - 复查 `backend-design-first` skill，确认结构规范检查位于 Understand and scope 之后、Design before implementation 之前。
-  - 复查 ADR，确认覆盖背景、决策、三类备选方案、决策理由和影响。
-- Java-Go parity 如何验证：
-  - 对照 Java Controller / Service / Mapper / Entity / Config / Security 分层，确认 Go 目标记录为 `cmd`、`internal/app`、`internal/http`、`internal/service`、`internal/repository`、`internal/domain`、`internal/platform`、`internal/security`。
-  - parity matrix 已索引本次设计文档、implementation note 和 ADR。
-- 结果如何：
-  - 本次为文档和协作规则修改，不改变运行时行为。
-  - 当前 Go 测试和 vet 均通过，规则修改没有破坏项目编译和静态检查。
+  - `golangci-lint run`：未通过运行前置条件，本机 shell 返回 `command not found: golangci-lint`，说明当前环境未安装该工具；`.golangci.yml` 已落地，后续安装工具后可直接运行。
+  - `sqlc generate`：不适用，本次没有 SQL、schema 或 sqlc 配置。
+  - migration 测试：不适用，本次没有 migration。
+  - OpenAPI validate：不适用，本次没有 OpenAPI 契约文件。
+- 手工验证：
+  - `git ls-files .idea` 无输出，说明 `.idea` 当前没有被 Git 跟踪；保留 `.gitignore` 中 `.idea/` 规则即可。
+  - 检查旧 `internal/http/requestid` 文件已删除，运行时代码 import 已切换到 `internal/platform/idgen`。
+- Java-Go parity 验证：
+  - 对照 Java `SystemController` 和 `SystemService`，确认 Go handler 只处理 HTTP 边界，Go system service 负责 system 响应数据组装。
+  - 对照 Java `EchoRequest`、`PingInfo`、`EchoInfo`，确认 Go HTTP DTO 保持 `message/tag/serviceName/activeProfiles/serverTime/echoedAt` 字段语义。
+  - 对照 Java `ApiResponse`、`ErrorCode`、`PageRequest`、`PageResponse`，确认拆分文件不改变外部 JSON 字段、错误码或分页计算。
 
 ## 6. 已知限制
-- 当前实际代码目录尚未完全覆盖长期目标结构，例如 `internal/app`、`internal/domain`、`internal/service`、`internal/repository`、`internal/security`、`api/openapi`、`migrations`、`configs` 仍未落地。
-- 这属于阶段性结构债务：目录规范已决策，但未开始的业务和基础设施不创建空 Go package。
-- 后续引入 auth/user/event/order、数据库、sqlc、OpenAPI 或 migration 时，需要按本次规则补齐对应目录，并更新设计文档、implementation note 和 parity matrix。
-- 如果未来业务复杂度要求偏离当前 package layout，需要先写明原因并新增或更新 ADR。
+- `internal/http/router.go` 当前仍负责创建默认 system service 和 handler。随着依赖增多，可继续把 router dependency assembly 收敛到 `internal/app` 的显式 dependency struct。
+- `internal/service/system` 当前依靠 handler 测试覆盖端到端行为，尚未新增独立 service 单元测试；当前逻辑分支很少，后续加入更多 health components 后应补齐。
+- response envelope 的 timestamp 仍使用 `time.Now()`，尚未接入 `platform/clock`；这不影响现有契约，但未来如需固定时间测试可以继续演进。
+- `api/openapi/.gitkeep` 和 `migrations/.gitkeep` 只是未来落点，不代表当前已有 OpenAPI 契约或 migration。
+- `.golangci.yml` 已新增，但是否能运行取决于本机是否安装 `golangci-lint`。
 
 ## 7. 对后续版本的影响
 - 对简历可用版的价值：
-  - 后续代码结构会更稳定，能清楚展示 Go 版如何对齐 Java 分层但不复制 Spring Boot 目录。
+  - 项目已经有更接近生产后端的入口、app、handler、service、DTO、platform 基础设施边界。
 - 对微服务 / 云原生演进的影响：
-  - `internal/platform`、`internal/security`、`internal/service`、`internal/repository` 的边界有助于后续拆分服务和抽取基础设施。
+  - `internal/app`、`internal/platform`、`internal/service` 和 `internal/http/dto` 的边界为后续拆分服务、接入 DB/Redis/OpenAPI/观测能力预留了清晰位置。
 - 对后续 Go package、migration、sqlc、OpenAPI 或测试策略的影响：
-  - 新增数据库访问时必须按 `internal/repository/mysql/queries`、`internal/repository/mysql/sqlc`、`internal/repository/mysql` 和根目录 `sqlc.yaml` 落地。
-  - 新增 OpenAPI 时必须放在 `api/openapi/eventhub.yaml` 和 `api/openapi/gen/`，且生成代码不能污染 domain model。
-  - 每次结构变化都要记录是否存在结构债务。
+  - 新增业务模块时必须继续遵守 `handler -> service -> repository -> sqlc/database`。
+  - 新增数据库访问时再创建 repository/mysql、queries、sqlc 和 migration，并运行对应生成和迁移验证。
+  - 新增 API 契约时再创建 `api/openapi/eventhub.yaml`，避免当前阶段生成空契约。

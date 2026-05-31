@@ -1,42 +1,6 @@
 package apperror
 
-import (
-	"errors"
-	"net/http"
-)
-
-type Code struct {
-	value          string
-	httpStatus     int
-	defaultMessage string
-}
-
-var (
-	CommonSuccess    = Code{value: "COMMON-000", httpStatus: http.StatusOK, defaultMessage: "成功"}
-	CommonValidation = Code{value: "COMMON-400", httpStatus: http.StatusBadRequest, defaultMessage: "请求参数不合法"}
-	CommonBusiness   = Code{value: "COMMON-401", httpStatus: http.StatusBadRequest, defaultMessage: "业务处理失败"}
-	CommonNotFound   = Code{value: "COMMON-404", httpStatus: http.StatusNotFound, defaultMessage: "资源不存在"}
-	CommonInternal   = Code{value: "COMMON-500", httpStatus: http.StatusInternalServerError, defaultMessage: "系统内部错误"}
-	AuthUnauthorized = Code{value: "AUTH-401", httpStatus: http.StatusUnauthorized, defaultMessage: "认证失败"}
-	AuthForbidden    = Code{value: "AUTH-403", httpStatus: http.StatusForbidden, defaultMessage: "权限不足"}
-	AuthConflict     = Code{value: "AUTH-409", httpStatus: http.StatusConflict, defaultMessage: "账号信息已存在"}
-)
-
-func (c Code) String() string {
-	return c.value
-}
-
-func (c Code) HTTPStatus() int {
-	if c.httpStatus == 0 {
-		return http.StatusInternalServerError
-	}
-	return c.httpStatus
-}
-
-func (c Code) DefaultMessage() string {
-	return c.defaultMessage
-}
-
+// AppError 表示可被统一映射为 API 响应的应用错误。
 type AppError struct {
 	code    Code
 	message string
@@ -44,6 +8,8 @@ type AppError struct {
 	cause   error
 }
 
+// New 根据错误码和可选自定义消息创建 AppError。
+// message 为空时使用错误码的默认用户提示。
 func New(code Code, message string) *AppError {
 	code = normalizeCode(code)
 	if message == "" {
@@ -52,18 +18,21 @@ func New(code Code, message string) *AppError {
 	return &AppError{code: code, message: message}
 }
 
+// WithData 创建携带结构化错误数据的 AppError。
 func WithData(code Code, message string, data any) *AppError {
 	err := New(code, message)
 	err.data = data
 	return err
 }
 
+// Wrap 创建包装底层错误原因的 AppError。
 func Wrap(code Code, message string, cause error) *AppError {
 	err := New(code, message)
 	err.cause = cause
 	return err
 }
 
+// Error 返回用户可读的错误消息。
 func (e *AppError) Error() string {
 	if e == nil {
 		return ""
@@ -71,6 +40,7 @@ func (e *AppError) Error() string {
 	return e.message
 }
 
+// Unwrap 返回被包装的底层错误原因。
 func (e *AppError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -78,6 +48,7 @@ func (e *AppError) Unwrap() error {
 	return e.cause
 }
 
+// Code 返回稳定的应用错误码，空接收者退化为 CommonInternal。
 func (e *AppError) Code() Code {
 	if e == nil {
 		return CommonInternal
@@ -85,6 +56,7 @@ func (e *AppError) Code() Code {
 	return e.code
 }
 
+// Message 返回用户可读的错误消息，空接收者退化为通用内部错误提示。
 func (e *AppError) Message() string {
 	if e == nil {
 		return CommonInternal.DefaultMessage()
@@ -92,27 +64,10 @@ func (e *AppError) Message() string {
 	return e.message
 }
 
+// Data 返回可选的结构化错误数据。
 func (e *AppError) Data() any {
 	if e == nil {
 		return nil
 	}
 	return e.data
-}
-
-func FromError(err error) (*AppError, bool) {
-	if err == nil {
-		return nil, false
-	}
-	var appErr *AppError
-	if errors.As(err, &appErr) {
-		return appErr, true
-	}
-	return nil, false
-}
-
-func normalizeCode(code Code) Code {
-	if code.value == "" {
-		return CommonInternal
-	}
-	return code
 }

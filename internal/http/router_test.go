@@ -14,7 +14,7 @@ import (
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
 	"eventhub-go/internal/http/middleware"
-	"eventhub-go/internal/http/requestid"
+	"eventhub-go/internal/platform/idgen"
 )
 
 func TestPingReturnsWrappedSuccessResponse(t *testing.T) {
@@ -23,7 +23,7 @@ func TestPingReturnsWrappedSuccessResponse(t *testing.T) {
 	if recorder.Code != nethttp.StatusOK {
 		t.Fatalf("unexpected status: %d", recorder.Code)
 	}
-	if recorder.Header().Get(requestid.HeaderName) == "" {
+	if recorder.Header().Get(idgen.HeaderRequestID) == "" {
 		t.Fatal("expected request id response header")
 	}
 
@@ -104,10 +104,10 @@ func TestEchoRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestRequestIDReusesSafeHeader(t *testing.T) {
-	headers := map[string]string{requestid.HeaderName: "req-safe_123"}
+	headers := map[string]string{idgen.HeaderRequestID: "req-safe_123"}
 	recorder := performRequest(testRouter(), nethttp.MethodGet, "/api/v1/system/ping", nil, headers)
 
-	if got := recorder.Header().Get(requestid.HeaderName); got != "req-safe_123" {
+	if got := recorder.Header().Get(idgen.HeaderRequestID); got != "req-safe_123" {
 		t.Fatalf("unexpected response request id: %s", got)
 	}
 
@@ -118,17 +118,17 @@ func TestRequestIDReusesSafeHeader(t *testing.T) {
 }
 
 func TestRequestIDRegeneratesUnsafeHeader(t *testing.T) {
-	headers := map[string]string{requestid.HeaderName: "unsafe request id ###"}
+	headers := map[string]string{idgen.HeaderRequestID: "unsafe request id ###"}
 	recorder := performRequest(testRouter(), nethttp.MethodGet, "/api/v1/system/ping", nil, headers)
 
-	got := recorder.Header().Get(requestid.HeaderName)
+	got := recorder.Header().Get(idgen.HeaderRequestID)
 	if got == "" {
 		t.Fatal("expected response request id")
 	}
 	if got == "unsafe request id ###" {
 		t.Fatal("expected regenerated request id")
 	}
-	if !requestid.Valid(got) {
+	if !idgen.ValidRequestID(got) {
 		t.Fatalf("expected valid regenerated request id: %s", got)
 	}
 }
@@ -153,7 +153,7 @@ func TestHealthHeadEndpoint(t *testing.T) {
 	if recorder.Code != nethttp.StatusOK {
 		t.Fatalf("unexpected status: %d", recorder.Code)
 	}
-	if recorder.Header().Get(requestid.HeaderName) == "" {
+	if recorder.Header().Get(idgen.HeaderRequestID) == "" {
 		t.Fatal("expected request id response header")
 	}
 	if recorder.Body.Len() != 0 {
@@ -182,7 +182,7 @@ func TestInfoHeadEndpoint(t *testing.T) {
 	if recorder.Code != nethttp.StatusOK {
 		t.Fatalf("unexpected status: %d", recorder.Code)
 	}
-	if recorder.Header().Get(requestid.HeaderName) == "" {
+	if recorder.Header().Get(idgen.HeaderRequestID) == "" {
 		t.Fatal("expected request id response header")
 	}
 	if recorder.Body.Len() != 0 {
@@ -276,7 +276,7 @@ func TestPanicRecoverDoesNotWriteErrorAfterCommittedResponse(t *testing.T) {
 			if bytes.Contains(recorder.Body.Bytes(), []byte("COMMON-500")) {
 				t.Fatal("did not expect COMMON-500 to be appended after response was committed")
 			}
-			if recorder.Header().Get(requestid.HeaderName) == "" {
+			if recorder.Header().Get(idgen.HeaderRequestID) == "" {
 				t.Fatal("expected request id response header")
 			}
 		})

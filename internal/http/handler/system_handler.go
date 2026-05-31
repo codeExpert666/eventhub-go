@@ -3,70 +3,38 @@ package handler
 import (
 	"net/http"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"eventhub-go/internal/apperror"
-	"eventhub-go/internal/config"
+	"eventhub-go/internal/http/dto"
 	"eventhub-go/internal/http/response"
 	"eventhub-go/internal/http/validation"
+	systemsvc "eventhub-go/internal/service/system"
 )
 
+// SystemHandler 将 system service 的用例适配为 HTTP 处理器。
 type SystemHandler struct {
-	cfg config.Config
+	service *systemsvc.Service
 }
 
-func NewSystemHandler(cfg config.Config) *SystemHandler {
-	return &SystemHandler{cfg: cfg}
+// NewSystemHandler 创建 system 与 actuator 端点使用的处理器。
+func NewSystemHandler(service *systemsvc.Service) *SystemHandler {
+	return &SystemHandler{service: service}
 }
 
-type PingInfo struct {
-	ServiceName    string    `json:"serviceName"`
-	ActiveProfiles []string  `json:"activeProfiles"`
-	ServerTime     time.Time `json:"serverTime"`
-}
-
-type EchoRequest struct {
-	Message string  `json:"message"`
-	Tag     *string `json:"tag"`
-}
-
-type EchoInfo struct {
-	Message  string    `json:"message"`
-	Tag      *string   `json:"tag"`
-	EchoedAt time.Time `json:"echoedAt"`
-}
-
-type HealthInfo struct {
-	Status string `json:"status"`
-}
-
-type Info struct {
-	App     AppInfo `json:"app"`
-	Runtime Runtime `json:"runtime"`
-}
-
-type AppInfo struct {
-	Name           string   `json:"name"`
-	Env            string   `json:"env"`
-	Version        string   `json:"version"`
-	ActiveProfiles []string `json:"activeProfiles"`
-}
-
-type Runtime struct {
-	ServerTime time.Time `json:"serverTime"`
-}
-
+// Ping 使用统一响应 envelope 写出基础服务存活信息。
 func (h *SystemHandler) Ping(w http.ResponseWriter, r *http.Request) {
-	response.WriteSuccess(w, r, PingInfo{
-		ServiceName:    h.cfg.AppName,
-		ActiveProfiles: h.cfg.ActiveProfiles(),
-		ServerTime:     time.Now(),
+	result := h.service.Ping(r.Context())
+	response.WriteSuccess(w, r, dto.PingResponse{
+		ServiceName:    result.ServiceName,
+		ActiveProfiles: result.ActiveProfiles,
+		ServerTime:     result.ServerTime,
 	})
 }
 
+// Echo 校验请求体，并返回回显消息与服务端时间。
 func (h *SystemHandler) Echo(w http.ResponseWriter, r *http.Request) {
-	var request EchoRequest
+	var request dto.EchoRequest
 	if err := validation.DecodeJSONBody(r, &request); err != nil {
 		response.WriteError(w, r, err)
 		return
@@ -77,38 +45,49 @@ func (h *SystemHandler) Echo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.WriteSuccess(w, r, EchoInfo{
-		Message:  request.Message,
-		Tag:      request.Tag,
-		EchoedAt: time.Now(),
+	result := h.service.Echo(r.Context(), systemsvc.EchoCommand{
+		Message: request.Message,
+		Tag:     request.Tag,
+	})
+	response.WriteSuccess(w, r, dto.EchoResponse{
+		Message:  result.Message,
+		Tag:      result.Tag,
+		EchoedAt: result.EchoedAt,
 	})
 }
 
+// Health 写出兼容 actuator 的最小健康检查响应。
 func (h *SystemHandler) Health(w http.ResponseWriter, r *http.Request) {
-	response.WriteJSON(w, http.StatusOK, HealthInfo{Status: "UP"})
+	result := h.service.Health(r.Context())
+	response.WriteJSON(w, http.StatusOK, dto.HealthResponse{Status: result.Status})
 }
 
+// HealthHead 为 actuator 健康检查探针写出仅包含状态码的响应。
 func (h *SystemHandler) HealthHead(w http.ResponseWriter, r *http.Request) {
 	response.WriteStatus(w, http.StatusOK)
 }
 
+// Info 写出兼容 actuator 的应用信息与运行时元数据。
 func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
-	response.WriteJSON(w, http.StatusOK, Info{
-		App: AppInfo{
-			Name:           h.cfg.AppName,
-			Env:            h.cfg.Env,
-			Version:        h.cfg.Version,
-			ActiveProfiles: h.cfg.ActiveProfiles(),
+	result := h.service.Info(r.Context())
+	response.WriteJSON(w, http.StatusOK, dto.InfoResponse{
+		App: dto.AppInfoResponse{
+			Name:           result.App.Name,
+			Env:            result.App.Env,
+			Version:        result.App.Version,
+			ActiveProfiles: result.App.ActiveProfiles,
 		},
-		Runtime: Runtime{ServerTime: time.Now()},
+		Runtime: dto.RuntimeInfoResponse{ServerTime: result.Runtime.ServerTime},
 	})
 }
 
+// InfoHead 为 actuator 信息探针写出仅包含状态码的响应。
 func (h *SystemHandler) InfoHead(w http.ResponseWriter, r *http.Request) {
 	response.WriteStatus(w, http.StatusOK)
 }
 
-func validateEchoRequest(request EchoRequest) *apperror.AppError {
+// validateEchoRequest 校验 system echo 端点的 HTTP 请求契约。
+func validateEchoRequest(request dto.EchoRequest) *apperror.AppError {
 	fields := validation.FieldErrors{}
 	if strings.TrimSpace(request.Message) == "" {
 		fields["message"] = "message 不能为空"

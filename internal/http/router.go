@@ -11,6 +11,8 @@ import (
 	"eventhub-go/internal/http/handler"
 	"eventhub-go/internal/http/middleware"
 	"eventhub-go/internal/http/response"
+	"eventhub-go/internal/platform/clock"
+	systemsvc "eventhub-go/internal/service/system"
 )
 
 // NewRouter 组装应用的 HTTP 路由树，并返回可直接挂载到 http.Server 的 Handler。
@@ -29,8 +31,9 @@ func NewRouter(cfg config.Config, logger *slog.Logger) http.Handler {
 	router.Use(middleware.Recover(logger))
 
 	// SystemHandler 只暴露系统探活、信息查询和基础回显接口。
-	// 路由层持有 handler 实例，但不关心 handler 内部如何读取配置或组织响应。
-	systemHandler := handler.NewSystemHandler(cfg)
+	// 当前阶段由路由装配默认 system service，后续业务依赖增多后可继续向 internal/app 收敛。
+	systemService := systemsvc.NewService(cfg, clock.RealClock{})
+	systemHandler := handler.NewSystemHandler(systemService)
 
 	// /api/v1 前缀用于业务 API，保持版本化入口，便于后续在不破坏旧客户端的前提下演进契约。
 	router.Get("/api/v1/system/ping", systemHandler.Ping)

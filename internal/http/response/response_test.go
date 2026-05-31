@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"eventhub-go/internal/apperror"
-	"eventhub-go/internal/http/requestid"
 	"eventhub-go/internal/http/response"
+	"eventhub-go/internal/platform/idgen"
 )
 
 func TestWriteSuccess(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/test", nil)
-	request = request.WithContext(requestid.WithContext(request.Context(), "req-success"))
+	request = request.WithContext(idgen.WithRequestID(request.Context(), "req-success"))
 	recorder := httptest.NewRecorder()
 
 	response.WriteSuccess(recorder, request, map[string]string{"hello": "eventhub"})
@@ -38,7 +38,7 @@ func TestWriteSuccess(t *testing.T) {
 
 func TestWriteError(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/test", nil)
-	request = request.WithContext(requestid.WithContext(request.Context(), "req-error"))
+	request = request.WithContext(idgen.WithRequestID(request.Context(), "req-error"))
 	recorder := httptest.NewRecorder()
 
 	response.WriteError(recorder, request, apperror.New(apperror.AuthForbidden, "权限不足"))

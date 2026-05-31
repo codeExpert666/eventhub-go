@@ -7,18 +7,7 @@ package config
 
 import (
 	"log/slog"
-	"os"
 	"strconv"
-	"strings"
-)
-
-const (
-	// EnvDev 表示本地开发环境，是未知或未配置环境名的兜底值。
-	EnvDev = "dev"
-	// EnvTest 表示测试环境，通常用于自动化测试或 CI。
-	EnvTest = "test"
-	// EnvProd 表示生产环境，会启用更保守的运行时约束。
-	EnvProd = "prod"
 )
 
 const (
@@ -86,65 +75,4 @@ func Load() Config {
 // 可以在 Config 中增加 Host 字段并在这里统一拼接。
 func (c Config) Addr() string {
 	return ":" + strconv.Itoa(c.Port)
-}
-
-// ActiveProfiles 返回当前激活的运行环境列表。
-//
-// 这个命名对齐 Java/Spring 中 profile 的概念，便于迁移时表达
-// “当前环境上下文”。Go 端目前只支持单一环境。
-func (c Config) ActiveProfiles() []string {
-	if c.Env == "" {
-		return []string{EnvDev}
-	}
-	return []string{c.Env}
-}
-
-// getEnv 读取字符串环境变量，并把空白字符串视为未配置。
-func getEnv(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-// getEnvInt 读取正整数环境变量；缺失、无法解析或非正数都会回退到默认值。
-func getEnvInt(key string, fallback int) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed <= 0 {
-		return fallback
-	}
-	return parsed
-}
-
-// normalizeEnv 将外部传入的环境名收敛到应用内部支持的固定集合。
-func normalizeEnv(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case EnvTest:
-		return EnvTest
-	case EnvProd:
-		return EnvProd
-	default:
-		return EnvDev
-	}
-}
-
-// parseLogLevel 将环境变量中的日志级别文本转换为 slog.Level。
-// 当前支持 DEBUG、INFO、WARN/WARNING、ERROR；INFO 由 default 分支兜底。
-// 未识别的值默认使用 INFO，避免拼写错误导致日志完全不可见。
-func parseLogLevel(value string) slog.Level {
-	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "DEBUG":
-		return slog.LevelDebug
-	case "WARN", "WARNING":
-		return slog.LevelWarn
-	case "ERROR":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }

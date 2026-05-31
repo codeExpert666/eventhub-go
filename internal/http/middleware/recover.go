@@ -7,8 +7,8 @@ import (
 	"runtime/debug"
 
 	"eventhub-go/internal/apperror"
-	"eventhub-go/internal/http/requestid"
 	"eventhub-go/internal/http/response"
+	"eventhub-go/internal/platform/idgen"
 	platformlog "eventhub-go/internal/platform/log"
 )
 
@@ -36,7 +36,7 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 			// recover 只有在 defer 函数中调用才会生效；没有 panic 时它会返回 nil。
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					id := requestid.FromContext(r.Context())
+					id := idgen.RequestIDFromContext(r.Context())
 					// panic 的值可以是任意类型，fmt.Sprint 能把常见值稳定转成日志字符串。
 					// debug.Stack 只写入服务端日志，不返回给客户端，避免暴露内部实现细节。
 					platformlog.WithRequestID(logger, id).ErrorContext(

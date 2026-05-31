@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"eventhub-go/internal/http/requestid"
+	"eventhub-go/internal/platform/idgen"
 	platformlog "eventhub-go/internal/platform/log"
 )
 
@@ -32,14 +32,14 @@ func RequestID(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 先尝试复用上游传入的 request id，便于跨服务或跨网关追踪。
 			// 复用前必须校验格式，避免把不可控字符串写入日志、响应头或上下文。
-			id := r.Header.Get(requestid.HeaderName)
-			if !requestid.Valid(id) {
-				id = requestid.New()
+			id := r.Header.Get(idgen.HeaderRequestID)
+			if !idgen.ValidRequestID(id) {
+				id = idgen.NewRequestID()
 			}
 
 			// 无论 request id 来自客户端还是服务端生成，都显式回写响应头，
 			// 这样调用方可以稳定地知道服务端最终采用的是哪个 ID。
-			w.Header().Set(requestid.HeaderName, id)
+			w.Header().Set(idgen.HeaderRequestID, id)
 
 			startedAt := time.Now()
 			// statusRecorder 包装原始 ResponseWriter，用于在不影响 handler 写响应的前提下记录状态码和响应体大小。
@@ -50,7 +50,7 @@ func RequestID(logger *slog.Logger) func(http.Handler) http.Handler {
 			// 将 request id 放入新的 context，再把新请求对象传给后续处理链。
 			// WithContext 只浅拷贝 Request 并替换 Context，不会修改原请求；这里不改 Header/URL/Form 等字段，
 			// 因此无需使用会复制更多字段的 Clone。
-			ctx := requestid.WithContext(r.Context(), id)
+			ctx := idgen.WithRequestID(r.Context(), id)
 			next.ServeHTTP(recorder, r.WithContext(ctx))
 
 			// 只有在后续 handler 执行完毕后，才能拿到最终状态码、响应字节数和耗时。

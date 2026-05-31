@@ -2,38 +2,7 @@ package page
 
 import "fmt"
 
-const (
-	DefaultPage = 1
-	DefaultSize = 20
-	MaxSize     = 100
-)
-
-type Request struct {
-	Page int `json:"page"`
-	Size int `json:"size"`
-}
-
-func NewRequest(page, size int) (Request, error) {
-	if page < 1 {
-		return Request{}, fmt.Errorf("page must be greater than or equal to 1")
-	}
-	if size < 1 {
-		return Request{}, fmt.Errorf("size must be greater than or equal to 1")
-	}
-	if size > MaxSize {
-		return Request{}, fmt.Errorf("size must be less than or equal to %d", MaxSize)
-	}
-	return Request{Page: page, Size: size}, nil
-}
-
-func DefaultRequest() Request {
-	return Request{Page: DefaultPage, Size: DefaultSize}
-}
-
-func (r Request) Offset() int64 {
-	return int64(r.Page-1) * int64(r.Size)
-}
-
+// Response describes a paged response with derived pagination metadata.
 type Response[T any] struct {
 	Items       []T   `json:"items"`
 	Page        int   `json:"page"`
@@ -44,6 +13,7 @@ type Response[T any] struct {
 	HasPrevious bool  `json:"hasPrevious"`
 }
 
+// NewResponse validates the request and derives pagination metadata.
 func NewResponse[T any](items []T, request Request, total int64) (Response[T], error) {
 	if request.Page < 1 {
 		return Response[T]{}, fmt.Errorf("page must be greater than or equal to 1")
