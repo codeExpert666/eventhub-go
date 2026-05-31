@@ -46,6 +46,15 @@ YYYY-MM-DD-主题.md
 - 关键 package layout 决策以 ADR 为准。
 - parity matrix 要记录 Java 分层到 Go 目录的映射。
 
+## HTTP DTO 与 VO 规范
+
+- HTTP request/response 结构体统一放 `internal/http/dto`。
+- 本项目不设置 `internal/http/vo`。
+- `internal/http/response` 只维护统一响应 envelope 和 writer，例如 `APIResponse`、`WriteSuccess`、`WriteError`。
+- DDD Value Object 放 `internal/domain/<domain>` 或 `internal/domain/common`。
+- 涉及 DTO 边界调整时，属于非微小修改，必须更新 design / implementation note / parity matrix。
+- 若引入例外，必须写 ADR。
+
 ## Parity 文档约定
 
 Parity 文档不是设计文档、实现说明或 ADR 的替代品，而是 Java-Go 对齐状态的索引和台账。

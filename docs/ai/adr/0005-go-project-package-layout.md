@@ -42,6 +42,14 @@ Go 版 EventHub 采用 `AGENTS.md` 中定义的规范结构作为长期目标，
 - `configs` 放配置示例。
 - `docs/ai` 继续作为工程质量和 Java-Go parity 的一部分。
 
+### HTTP DTO 与 VO 边界
+
+Go 版不创建 `internal/http/vo`。HTTP 请求体、query 参数对象、path 参数辅助对象、HTTP response data、list item / summary / detail response 对象统一放 `internal/http/dto`，并通过 `XxxRequest`、`XxxResponse`、`XxxListItemResponse`、`XxxSummaryResponse`、`XxxDetailResponse` 等后缀表达用途。
+
+`internal/http/response` 只放统一响应 envelope 和 writer，例如 `APIResponse`、`Success` / `Failure`、`WriteSuccess` / `WriteError` / `WriteJSON` / `WriteStatus`，不放具体业务响应 DTO。
+
+Java 项目中常见的 VO 命名在 Go 版不直接复刻：HTTP 展示对象归入 `internal/http/dto`，DDD Value Object 归入 `internal/domain/<domain>` 或 `internal/domain/common`。service 不依赖 `internal/http/dto`，handler 负责 DTO 与 service Command / Query、service result / domain model 之间的映射；repository/mysql 负责 sqlc row 与 domain model 的映射。
+
 同时采用阶段化落地原则：当前阶段没有实现的业务包不创建空 `.go` 文件；允许使用 `.gitkeep` 或 `README.md` 作为非 Go 目录占位，但不要制造无法编译或无意义 package。
 
 ## 备选方案

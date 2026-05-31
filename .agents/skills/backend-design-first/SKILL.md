@@ -68,6 +68,29 @@ Required output for this check:
 - After implementation, the implementation note must list file moves and package boundary changes.
 - The final "Risks / follow-ups" summary must state whether any structure debt remains.
 
+### HTTP DTO boundary check
+
+Before design and implementation, check the HTTP DTO / VO / Value Object boundary:
+- Does this change add HTTP request or response structs?
+  - If yes, place them under `internal/http/dto`.
+- Does this change add a concrete business response?
+  - If yes, do not place it under `internal/http/response`; that package is only for the unified envelope and writer.
+- Does this change try to create `vo`?
+  - Default answer is no.
+  - If it is an HTTP display object, rename it to `XxxResponse` and place it under `internal/http/dto`.
+  - If it is a DDD Value Object, place it under `internal/domain/<domain>` or `internal/domain/common`.
+- Does this change make service depend on `internal/http/dto`?
+  - Default answer is no; introduce a service Command / Query instead.
+- Does this change add `json` tags to a domain type?
+  - Default answer is avoid it unless there is an explicit design reason and the reason is documented.
+- Does this change expose a sqlc generated model to a handler or DTO?
+  - This is forbidden; map through repository/mysql and domain models.
+
+Required output for this check:
+- The design note must state any DTOs added or modified by the change.
+- The implementation note must state the mapping between DTOs, service commands/queries, service results, and domain models.
+- If deviating from the DTO boundary, add or update an ADR before implementation.
+
 ## Step 3: Design Before Implementation
 Produce a concise design that covers:
 - domain objects

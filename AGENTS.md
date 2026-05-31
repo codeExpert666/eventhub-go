@@ -237,7 +237,66 @@ eventhub-go/
 - 这是应用装配吗？如果是，放 `internal/app`。
 - 这是可执行入口吗？如果是，只能放 `cmd/eventhub/main.go`。
 
-### 7.5 禁止偏离规则
+### 7.5 HTTP DTO / VO / Value Object 边界
+
+本项目在 Go 版中不逐字复刻 Java 项目的 VO 命名习惯，而是用 package 边界和类型后缀表达职责：
+
+1. 本项目不设置 `internal/http/vo`。
+2. Java 项目中常见的 VO 命名，在 Go 版不直接复刻。
+3. HTTP 层所有请求和响应结构体统一放 `internal/http/dto`。
+4. `internal/http/dto` 包含：
+   - JSON request body
+   - query 参数对象
+   - path 参数辅助对象，如确实需要
+   - HTTP response data 对象
+   - list item / summary / detail response 对象
+5. `internal/http/dto` 类型命名推荐：
+   - `XxxRequest`
+   - `XxxResponse`
+   - `XxxListItemResponse`
+   - `XxxSummaryResponse`
+   - `XxxDetailResponse`
+6. 不推荐类型名：
+   - `XxxVO`
+   - `XxxDTO`，除非外部生成代码或兼容需求
+   - `XxxResp`
+7. `internal/http/response` 只放统一响应 envelope 和 writer：
+   - `APIResponse`
+   - `Success` / `Failure`
+   - `WriteSuccess` / `WriteError` / `WriteJSON` / `WriteStatus`
+8. `internal/http/response` 不允许放具体业务响应 DTO。
+9. DDD Value Object 放 domain 层：
+   - `internal/domain/common`
+   - `internal/domain/user`
+   - `internal/domain/order`
+   - 或对应业务 domain 包
+10. domain model 和 domain value object 不应带 HTTP JSON 契约职责。
+11. handler 可以依赖 dto。
+12. service 不应依赖 `internal/http/dto`。
+13. repository 不应依赖 `internal/http/dto`。
+14. sqlc generated model 不能作为 HTTP DTO 对外暴露。
+15. handler 负责：
+   - decode HTTP DTO
+   - validate HTTP DTO
+   - map DTO to service Command / Query
+   - map service result / domain model to HTTP DTO
+   - call `response.WriteSuccess` / `response.WriteError`
+16. service 负责业务规则和事务边界，不拼 HTTP JSON。
+17. repository/mysql 负责 sqlc row 与 domain model 的映射。
+
+| 类型 | 放置位置 | 示例 |
+|---|---|---|
+| HTTP 请求体 | `internal/http/dto` | `RegisterRequest` |
+| HTTP 响应 data | `internal/http/dto` | `LoginResponse` |
+| 列表项响应 | `internal/http/dto` | `AdminUserListItemResponse` |
+| 统一响应 envelope | `internal/http/response` | `APIResponse` |
+| 响应写出工具 | `internal/http/response` | `WriteSuccess` |
+| service 输入 | `internal/service/<domain>` | `RegisterCommand` |
+| domain model | `internal/domain/<domain>` | `User` |
+| domain value object | `internal/domain/<domain>` 或 `common` | `Email`, `Money` |
+| sqlc row | `internal/repository/mysql/sqlc` | `sqlc.User` |
+
+### 7.6 禁止偏离规则
 - 不要把业务逻辑写进 `cmd/eventhub/main.go`。
 - 不要让 handler 直接访问 sqlc、`database/sql`、redis。
 - 不要让 domain 依赖 HTTP DTO。
