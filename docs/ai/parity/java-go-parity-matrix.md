@@ -33,11 +33,24 @@ Java 版参考项目：
 | API 契约 | Java controller / OpenAPI / MockMvc 测试 | Go handler / OpenAPI / HTTP 测试 | 待迁移 | 后续每个 API 设计需对照 Java 路径、字段、状态码和错误码。 |
 | 数据库模型 | Java migration / mapper / entity | Go migration / sqlc / repository | 待迁移 | 后续表、字段、索引、唯一约束和状态值需对齐 Java 版。 |
 | JWT claim 边界 | Java auth ADR 和实现 | Go auth token 设计 | 规则已初始化 | Go 版禁止把角色、邮箱、用户名、用户状态写入 JWT。 |
-| 测试策略 | Java unit / integration / MockMvc / H2 | Go unit / service / repository / API / migration 测试 | 规则已初始化 | 当前尚无 Go module，后续建立工程后执行 `go test ./...`、`go vet ./...`。 |
-| 质量门禁 | Java Maven test、OpenAPI、profile 测试 | Go `gofmt`、`go test ./...`、`go vet ./...`、lint、sqlc、migration、OpenAPI validate | 规则已初始化 | 本次只落规则，工具选择和 CI 待后续工程初始化。 |
-| Spring Boot / Maven | Java 基础工程 | Go module / Makefile / CI | 待决策 | 不直接迁移 Spring/Maven 结构，后续单独设计 Go 工程基础。 |
+| 测试策略 | Java unit / integration / MockMvc / H2 | Go unit / service / repository / API / migration 测试 | 规则已初始化 | Go module 已建立，HTTP 基础测试已使用 `httptest` 覆盖；后续数据库模块再补 migration/sqlc/repository 测试。 |
+| 质量门禁 | Java Maven test、OpenAPI、profile 测试 | Go `gofmt`、`go test ./...`、`go vet ./...`、lint、sqlc、migration、OpenAPI validate | 规则已初始化 | 当前已可运行 `gofmt`、`go test ./...`、`go vet ./...`；lint、sqlc、migration、OpenAPI validate 待对应工具和契约引入。 |
+| Spring Boot / Maven | Java 基础工程 | Go module / Makefile / CI | 规则已初始化 | 已初始化 `go.mod` 和 `cmd/eventhub`，不迁移 Spring/Maven 结构；Makefile/CI 后续补齐。参考 `docs/ai/design/001-http-foundation.md`、`docs/ai/implementation/001-http-foundation.md`。 |
 | MyBatis | Java mapper 持久化边界 | sqlc/database + repository | 待决策 | 已在规则中指定 sqlc/database 边界，具体 sqlc 配置待工程初始化。 |
 | H2 测试 profile | Java test profile | Go migration / test database strategy | 待决策 | Go 版不默认采用 H2，需要在数据库测试设计中另行决策。 |
+| HTTP 工程底座 | Java `EventhubApplication`、Spring Boot Web 基础工程 | `cmd/eventhub/main.go`、`internal/http/server.go`、`internal/http/router.go` | 已对齐 | Go 版使用标准库 HTTP server + chi router 建立最小可运行服务，不迁移 Spring Boot 容器；首次退出信号触发优雅关闭并立即释放 signal notify，保留二次 Ctrl+C 强制退出语义。参考 `docs/ai/adr/0002-web-router-chi.md`。 |
+| Web router | Java Spring MVC annotation routing | Go `github.com/go-chi/chi/v5` | 已对齐 | 对齐路径、HTTP method 和 middleware 语义，不复制 Spring MVC 注解模型。参考 `docs/ai/adr/0002-web-router-chi.md`。 |
+| 统一响应体 | Java `common/api/ApiResponse.java` | Go `internal/http/response.APIResponse` | 已对齐 | 字段保持 `code/message/data/requestId/timestamp`；timestamp 使用 Go `time.Time` JSON ISO 格式。参考 `docs/ai/adr/0003-error-response-contract.md`。 |
+| 错误码与业务错误 | Java `ErrorCode`、`BusinessException`、`GlobalExceptionHandler` | Go `internal/apperror.Code`、`AppError`、`internal/http/response` | 已对齐 | 初始化 `COMMON-000/400/401/404/500` 和 `AUTH-401/403/409`；业务失败使用显式错误返回，不用 panic。参考 `docs/ai/adr/0003-error-response-contract.md`。 |
+| 参数校验错误 | Java Bean Validation + `GlobalExceptionHandler` | Go `internal/http/validation` + handler 显式校验 | 已对齐 | JSON 格式错误和字段校验失败统一映射为 `COMMON-400`，字段错误通过 `data` 返回；Go 版先手写最小校验。 |
+| requestId | Java `infra/logging/RequestIdFilter.java`、Logback MDC | Go `internal/http/requestid`、`internal/http/middleware/request_id.go`、`slog` 字段 | 已对齐 | 复用合法 `X-Request-Id`，非法或缺失时生成新值；写入响应头、context、日志字段和统一响应体。参考 `docs/ai/adr/0004-config-and-logging.md`。 |
+| panic / 未预期异常 | Java `GlobalExceptionHandler#handleUnexpectedException` | Go `internal/http/middleware/recover.go` | 已对齐 | 未预期 panic 统一记录日志；响应未提交时返回 `COMMON-500`，响应已提交时不再追加错误体，避免损坏客户端响应；业务错误不通过 panic 表达。 |
+| system ping | Java `SystemController#ping`、`SystemService#ping`、`PingInfo` | Go `internal/http/handler.SystemHandler.Ping` | 已对齐 | `GET /api/v1/system/ping` 返回统一响应和 `serviceName/activeProfiles/serverTime`。 |
+| system echo | Java `SystemController#echo`、`EchoRequest`、`EchoInfo` | Go `internal/http/handler.SystemHandler.Echo` | 已对齐 | `POST /api/v1/system/echo` 校验 `message/tag` 并回显 `message/tag/echoedAt`。 |
+| Actuator health/info | Java Spring Boot Actuator `/actuator/health`、`/actuator/info`，`SystemControllerTest#healthEndpointShouldPermitHeadRequest`，`SecurityConfig` Actuator GET/HEAD 放行 | Go `internal/http/handler.SystemHandler.Health/HealthHead/Info/InfoHead`、`internal/http/router.go` | 已对齐 | Go 版先实现无数据库依赖的最小 GET health/info，并显式补齐 `HEAD /actuator/health`、`HEAD /actuator/info`；HEAD 返回 HTTP 200、保留 requestId 头且不写响应体，后续接入 DB/Redis 后补 components 语义。 |
+| 分页契约 | Java `PageRequest`、`PageResponse` | Go `internal/page` | 已对齐 | 保持 1-based page、默认 1/20、最大 100、offset、totalPages、hasNext、hasPrevious 规则。 |
+| 配置与日志 | Java `application*.yml`、Logback、MDC | Go `internal/config`、`internal/platform/log`、`slog` | 规则已初始化 | dev/test/prod 雏形和 JSON 结构化日志已初始化；后续数据库、Redis、JWT 配置接入时继续扩展。参考 `docs/ai/adr/0004-config-and-logging.md`。 |
+| HTTP 基础测试 | Java `SystemControllerTest`、`ApiResponseTest`、`PageRequestTest`、`PageResponseTest`、`BusinessExceptionTest` | Go `internal/http/*_test.go`、`internal/apperror/error_test.go`、`internal/page/page_test.go` | 已对齐 | 使用 `httptest` 覆盖 requestId、统一响应、错误映射、ping、echo、health/info GET、health/info HEAD、panic recover 未提交/已提交响应场景和分页语义。 |
 
 ## 后续维护规则
 
