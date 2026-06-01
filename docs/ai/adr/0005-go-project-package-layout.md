@@ -52,6 +52,8 @@ Go 版不创建 `internal/http/vo`。HTTP 请求体、query 参数对象、path 
 
 Java 项目中常见的 VO 命名在 Go 版不直接复刻：HTTP 展示对象归入 `internal/http/dto`，DDD Value Object 归入 `internal/domain/<domain>` 或 `internal/domain/common`。service 不依赖 `internal/http/dto`，handler 负责 DTO 与 service Command / Query、service result / domain model 之间的映射；repository/mysql 负责 sqlc row 与 domain model 的映射。
 
+2026-06-01 的 HTTP DTO 边界审计确认：当前代码不存在 `internal/http/vo`、`internal/**/vo`、文件名包含 `vo` 的 Go 文件或 `*VO` struct；system 和 actuator 的 HTTP request/response 结构体已位于 `internal/http/dto`；`internal/http/response` 只保留统一响应 envelope、writer 和测试；`internal/service/system` 使用 Command / Result 类型，不依赖 HTTP DTO。后续 auth/user/event/order 等模块迁移时继续沿用该边界。
+
 同时采用阶段化落地原则：当前阶段没有实现的业务包不创建空 `.go` 文件；允许使用 `.gitkeep` 或 `README.md` 作为非 Go 目录占位，但不要制造无法编译或无意义 package。
 
 当前已落地的运行时结构包括：
