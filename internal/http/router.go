@@ -41,6 +41,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger) http.Handler {
 
 	// /actuator/* 保留 Spring Boot Actuator 风格的运维端点命名，方便和 Java 版部署、监控习惯对齐。
 	router.Get("/actuator/health", systemHandler.Health)
+	// HEAD 端点只返回状态码和响应头，供负载均衡或监控探针做轻量可达性检查。
 	router.Head("/actuator/health", systemHandler.HealthHead)
 	router.Get("/actuator/info", systemHandler.Info)
 	router.Head("/actuator/info", systemHandler.InfoHead)
