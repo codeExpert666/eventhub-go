@@ -8,7 +8,7 @@ import (
 
 	"eventhub-go/internal/apperror"
 	"eventhub-go/internal/config"
-	"eventhub-go/internal/http/handler"
+	systemhandler "eventhub-go/internal/http/handler/system"
 	"eventhub-go/internal/http/middleware"
 	"eventhub-go/internal/http/response"
 	"eventhub-go/internal/platform/clock"
@@ -30,10 +30,10 @@ func NewRouter(cfg config.Config, logger *slog.Logger) http.Handler {
 	router.Use(middleware.RequestID(logger))
 	router.Use(middleware.Recover(logger))
 
-	// SystemHandler 只暴露系统探活、信息查询和基础回显接口。
+	// system handler 只暴露系统探活、信息查询和基础回显接口。
 	// 当前阶段由路由装配默认 system service，后续业务依赖增多后可继续向 internal/app 收敛。
 	systemService := systemsvc.NewService(cfg, clock.RealClock{})
-	systemHandler := handler.NewSystemHandler(systemService)
+	systemHandler := systemhandler.NewHandler(systemService)
 
 	// /api/v1 前缀用于业务 API，保持版本化入口，便于后续在不破坏旧客户端的前提下演进契约。
 	router.Get("/api/v1/system/ping", systemHandler.Ping)

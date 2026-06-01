@@ -4,7 +4,7 @@
 
 本次改动解决的是 Go 版 EventHub 在继续迁移 Java DTO / VO 语义前，需要确认运行时代码和文档规则是否已经统一的问题。
 
-Java 版中 `modules/system/vo/PingInfo`、`modules/system/vo/EchoInfo` 以及 auth 模块下的 `vo/*` 都是典型 HTTP 展示对象；Go 版不逐字复制 `VO` 包名，而是把 HTTP request/response data 统一放入 `internal/http/dto`，把统一响应 envelope 和 writer 留在 `internal/http/response`，把 DDD Value Object 留给 domain 层。
+Java 版中 `modules/system/vo/PingInfo`、`modules/system/vo/EchoInfo` 以及 auth 模块下的 `vo/*` 都是典型 HTTP 展示对象；Go 版不逐字复制 `VO` 包名，而是把 HTTP request/response data 统一放入 `internal/http/dto/<module>`，把统一响应 envelope 和 writer 留在 `internal/http/response`，把 DDD Value Object 留给 domain 层。
 
 本次审计确认当前 Go 运行时代码已经符合该边界，没有需要移动的 Go struct；因此改动集中在更新设计文档、ADR 和 parity matrix，把“规则已初始化”推进为“当前代码已审计确认”。
 
@@ -25,10 +25,10 @@ Java 版中 `modules/system/vo/PingInfo`、`modules/system/vo/EchoInfo` 以及 a
   - 本次没有新增空 Go package。
   - 本次没有修改 API、handler 行为、service 行为、response body shape、JSON 字段或错误码。
 - DTO 与 service command/domain model 的映射关系：
-  - `internal/http/dto.EchoRequest` 由 handler decode 和 validate。
+  - `internal/http/dto/system.EchoRequest` 由 handler decode 和 validate。
   - handler 将 `EchoRequest` 映射为 `internal/service/system.EchoCommand`。
   - service 返回 `PingResult`、`EchoResult`、`HealthResult`、`InfoResult` 等 result 类型。
-  - handler 将 service result 映射为 `dto.PingResponse`、`dto.EchoResponse`、`dto.HealthResponse`、`dto.InfoResponse`。
+  - handler 将 service result 映射为 `systemdto.PingResponse`、`systemdto.EchoResponse`、`systemdto.HealthResponse`、`systemdto.InfoResponse`。
   - `internal/service/system` 不依赖 `internal/http/dto`；当前没有 domain/repository 代码参与。
 - 是否更新 Java-Go parity 记录：
   - 已更新。Java VO 命名习惯与 Go HTTP DTO / domain Value Object 边界属于刻意结构差异，且本次审计了当前运行时代码，触发 parity matrix 更新条件。
@@ -67,10 +67,10 @@ Java 版中 `modules/system/vo/PingInfo`、`modules/system/vo/EchoInfo` 以及 a
 - 手工 / 命令审计：
   - `find internal -path '*/vo' -o -path '*/vo/*' -o -iname '*vo*.go' -print`：无输出，未发现运行时代码 VO 目录或 VO 文件。
   - `rg -n "\b[A-Za-z0-9_]*VO\b|internal/http/vo|/vo" internal api cmd .agents AGENTS.md || true`：运行时代码无命中；仅规则文档中有禁止和说明性命中。
-  - `rg -n "^type\s+\w+\s+struct" internal/http/handler internal/http/response internal/http/dto internal/service`：确认 handler 只有 `SystemHandler`，HTTP DTO 位于 dto 包，response 包只有 `APIResponse`，service 为 Command / Result 类型。
+  - `rg -n "^type\s+\w+\s+struct" internal/http/handler internal/http/response internal/http/dto internal/service`：确认 system handler 位于模块子包，HTTP DTO 位于 dto 模块子包，response 包只有 `APIResponse`，service 为 Command / Result 类型。
   - `rg -n "internal/http/dto" internal/service internal/domain internal/repository || true`：无输出，service/domain/repository 未依赖 HTTP DTO。
 - Java-Go parity 如何验证：
-  - 对照 Java `modules/system/dto/request/EchoRequest`、`modules/system/vo/PingInfo`、`modules/system/vo/EchoInfo`，确认 Go 版 system HTTP request/response 已在 `internal/http/dto`。
+  - 对照 Java `modules/system/dto/request/EchoRequest`、`modules/system/vo/PingInfo`、`modules/system/vo/EchoInfo`，确认 Go 版 system HTTP request/response 已在 `internal/http/dto/system`。
   - 对照 Java `modules/auth/vo/*`，确认未来 auth 迁移应继续落到 Go HTTP DTO，而不是新增 `internal/http/vo`。
 
 ## 6. 已知限制
@@ -85,6 +85,6 @@ Java 版中 `modules/system/vo/PingInfo`、`modules/system/vo/EchoInfo` 以及 a
 - 对微服务 / 云原生演进的影响：
   - DTO 与 domain value object 的边界清晰后，未来服务拆分、OpenAPI schema 管理和跨服务契约治理会更稳定。
 - 对后续 Go package、migration、sqlc、OpenAPI 或测试策略的影响：
-  - 新增 HTTP request/response 时默认进入 `internal/http/dto`。
+  - 新增 HTTP request/response 时默认进入 `internal/http/dto/<module>`。
   - 新增 DDD Value Object 时默认进入 `internal/domain/<domain>` 或 `internal/domain/common`。
   - 新增 repository/sqlc 时继续通过 repository/mysql 映射，不把 sqlc generated model 暴露给 handler 或 DTO。

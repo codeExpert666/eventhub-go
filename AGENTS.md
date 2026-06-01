@@ -147,7 +147,13 @@ eventhub-go/
       server.go
       middleware/
       handler/
+        system/
+        auth/
       dto/
+        system/
+          request.go
+          response.go
+        auth/
       response/
       validation/
 
@@ -202,7 +208,7 @@ eventhub-go/
 - 不要为了“看起来完整”创建空 Go package。
 - 当前阶段没有实现的业务包，不要创建空 `.go` 文件。
 - 允许使用 `.gitkeep` 或 `README.md` 作为非 Go 目录占位，但不要制造无法编译或无意义 package。
-- 一旦某个功能阶段开始，例如 auth、user、event、order，就必须按规范补齐对应 `domain`、`service`、`repository`、`handler`、`dto`、`security` 或 `platform` 目录。
+- 一旦某个功能阶段开始，例如 auth、user、event、order，就必须按规范补齐对应 `domain`、`service`、`repository`、`handler/<module>`、`dto/<module>`、`security` 或 `platform` 目录。
 - 新增数据库访问时：
   - SQL 文件放 `internal/repository/mysql/queries/`。
   - sqlc generated code 放 `internal/repository/mysql/sqlc/`。
@@ -224,8 +230,8 @@ eventhub-go/
 
 ### 7.4 每次生成代码前的结构检查清单
 在创建或修改代码前，Codex 必须先判断：
-- 这是 HTTP 传输层代码吗？如果是，放 `internal/http`。
-- 这是请求/响应 DTO 吗？如果是，放 `internal/http/dto`。
+- 这是 HTTP 传输层代码吗？如果是，放 `internal/http`；具体业务 handler 放 `internal/http/handler/<domain>`。
+- 这是请求/响应 DTO 吗？如果是，放 `internal/http/dto/<domain>`。
 - 这是业务用例吗？如果是，放 `internal/service/<domain>`。
 - 这是 service Command / Query / Result 吗？如果是，放 `internal/service/<domain>` 内的 `command.go`、`query.go` 或 `result.go`。
 - 这是领域模型或枚举吗？如果是，放 `internal/domain/<domain>` 或 `internal/domain/common`。
@@ -238,14 +244,56 @@ eventhub-go/
 - 这是应用装配吗？如果是，放 `internal/app`。
 - 这是可执行入口吗？如果是，只能放 `cmd/eventhub/main.go`。
 
-### 7.5 HTTP DTO / VO / Value Object 边界
+### 7.5 HTTP handler / DTO 模块化组织
+
+HTTP 层按传输职责横向分层，同时在 `handler` 和 `dto` 内部按业务模块拆子包，避免所有模块长期堆在同一目录和同一 package 中：
+
+1. 正式业务模块默认使用 `internal/http/handler/<module>` 子包：
+   - 例如 `internal/http/handler/system`、`internal/http/handler/auth`、`internal/http/handler/user`。
+   - 子包内 `handler.go` 放 handler struct、constructor 和依赖字段。
+   - 复杂模块可按 use case 拆文件，例如 `register.go`、`login.go`、`list_admin_users.go`。
+   - 子包内类型可命名为 `Handler`，调用处使用 import alias 表达模块，例如 `systemhandler.NewHandler`、`authhandler.NewHandler`。
+2. 正式业务模块默认使用 `internal/http/dto/<module>` 子包：
+   - 例如 `internal/http/dto/system`、`internal/http/dto/auth`、`internal/http/dto/user`。
+   - `request.go` 放 JSON request body、query 参数对象和 path 参数辅助对象。
+   - `response.go` 放 HTTP response data、list item、summary、detail response 对象。
+   - DTO 数量很多时，可继续按 use case 拆分，例如 `login_request.go`、`login_response.go`、`admin_user_response.go`。
+3. 不要创建空文件凑结构：
+   - 没有请求 DTO 时，不创建空 `request.go`。
+   - 没有响应 DTO 时，不创建空 `response.go`。
+   - 当前阶段没有实现的模块，不创建空 handler/dto Go package。
+4. `internal/http/handler` 和 `internal/http/dto` 根目录只作为传输层分类目录，不长期放具体业务 handler 或具体业务 DTO。
+5. handler 子包可以依赖对应 dto 子包、service 包、HTTP response/validation 工具；service、domain、repository 不依赖 HTTP DTO。
+6. 如果确需偏离按模块子包组织，必须在设计文档和 implementation note 中说明原因；属于架构取舍时更新 ADR。
+
+推荐结构：
+
+```text
+internal/http/
+  handler/
+    system/
+      handler.go
+    auth/
+      handler.go
+      register.go
+      login.go
+  dto/
+    system/
+      request.go
+      response.go
+    auth/
+      request.go
+      response.go
+```
+
+### 7.6 HTTP DTO / VO / Value Object 边界
 
 本项目在 Go 版中不逐字复刻 Java 项目的 VO 命名习惯，而是用 package 边界和类型后缀表达职责：
 
 1. 本项目不设置 `internal/http/vo`。
 2. Java 项目中常见的 VO 命名，在 Go 版不直接复刻。
-3. HTTP 层所有请求和响应结构体统一放 `internal/http/dto`。
-4. `internal/http/dto` 包含：
+3. HTTP 层所有请求和响应结构体统一放 `internal/http/dto/<module>`。
+4. `internal/http/dto/<module>` 包含：
    - JSON request body
    - query 参数对象
    - path 参数辅助对象，如确实需要
@@ -272,7 +320,7 @@ eventhub-go/
    - `internal/domain/order`
    - 或对应业务 domain 包
 10. domain model 和 domain value object 不应带 HTTP JSON 契约职责。
-11. handler 可以依赖 dto。
+11. handler 可以依赖对应模块的 dto 子包。
 12. service 不应依赖 `internal/http/dto`。
 13. repository 不应依赖 `internal/http/dto`。
 14. sqlc generated model 不能作为 HTTP DTO 对外暴露。
@@ -287,9 +335,9 @@ eventhub-go/
 
 | 类型 | 放置位置 | 示例 |
 |---|---|---|
-| HTTP 请求体 | `internal/http/dto` | `RegisterRequest` |
-| HTTP 响应 data | `internal/http/dto` | `LoginResponse` |
-| 列表项响应 | `internal/http/dto` | `AdminUserListItemResponse` |
+| HTTP 请求体 | `internal/http/dto/<module>/request.go` | `RegisterRequest` |
+| HTTP 响应 data | `internal/http/dto/<module>/response.go` | `LoginResponse` |
+| 列表项响应 | `internal/http/dto/<module>/response.go` | `AdminUserListItemResponse` |
 | 统一响应 envelope | `internal/http/response` | `APIResponse` |
 | 响应写出工具 | `internal/http/response` | `WriteSuccess` |
 | service 写输入 | `internal/service/<domain>/command.go` | `RegisterCommand` |
@@ -299,7 +347,7 @@ eventhub-go/
 | domain value object | `internal/domain/<domain>` 或 `common` | `Email`, `Money` |
 | sqlc row | `internal/repository/mysql/sqlc` | `sqlc.User` |
 
-### 7.6 Service Command / Query / Result 文件边界
+### 7.7 Service Command / Query / Result 文件边界
 
 service 层既承载业务规则，也承载 handler 与业务用例之间的输入输出契约。为了避免复杂模块把依赖、输入、输出和业务方法都堆在一个大文件中，新增或调整 service package 时遵守以下规则：
 
@@ -360,7 +408,7 @@ internal/service/<domain>/
 | service 输出 | `internal/service/<domain>/result.go` | `LoginResult` |
 | service 用例方法 | `internal/service/<domain>/<usecase>.go` | `register.go` |
 
-### 7.7 禁止偏离规则
+### 7.8 禁止偏离规则
 - 不要把业务逻辑写进 `cmd/eventhub/main.go`。
 - 不要让 handler 直接访问 sqlc、`database/sql`、redis。
 - 不要让 domain 依赖 HTTP DTO。
@@ -368,6 +416,7 @@ internal/service/<domain>/
 - 不要在 platform 中放业务规则。
 - 不要在 `repository/mysql` 中做 HTTP 错误响应。
 - 不要在 service 中拼 HTTP JSON。
+- 不要把新业务 handler 或 DTO 长期堆在 `internal/http/handler`、`internal/http/dto` 根目录。
 - 不要为了少写文件而把 handler、service、repository 混在一个文件。
 - 不要为了少写文件而把 service 的 Command / Query / Result 和多个复杂业务方法长期堆在 `service.go`。
 - 不要把 request DTO 当 domain model 长期使用。

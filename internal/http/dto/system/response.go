@@ -1,5 +1,4 @@
-// Package dto 定义 HTTP 请求与响应的数据契约。
-package dto
+package system
 
 import "time"
 
@@ -8,12 +7,6 @@ type PingResponse struct {
 	ServiceName    string    `json:"serviceName"`
 	ActiveProfiles []string  `json:"activeProfiles"`
 	ServerTime     time.Time `json:"serverTime"`
-}
-
-// EchoRequest 表示 POST /api/v1/system/echo 的请求体。
-type EchoRequest struct {
-	Message string  `json:"message"`
-	Tag     *string `json:"tag"`
 }
 
 // EchoResponse 表示 POST /api/v1/system/echo 的响应数据。

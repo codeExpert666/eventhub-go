@@ -68,16 +68,41 @@ Required output for this check:
 - After implementation, the implementation note must list file moves and package boundary changes.
 - The final "Risks / follow-ups" summary must state whether any structure debt remains.
 
+### HTTP handler / DTO module package check
+
+Before design and implementation, check the HTTP module package layout:
+- Does this change add or modify a concrete business HTTP handler?
+  - Default location is `internal/http/handler/<module>`.
+  - Use `handler.go` for the handler struct, constructor, and dependency fields.
+  - Split complex use cases into files such as `register.go`, `login.go`, `list_admin_users.go`, or `create_event.go`.
+- Does this change add or modify HTTP request / response DTOs?
+  - Default location is `internal/http/dto/<module>`.
+  - Put request body, query objects, and path helper objects in `request.go`.
+  - Put response data, list item, summary, and detail response objects in `response.go`.
+  - If a module has many DTOs, split by use case inside the same module package.
+- Does this change place concrete business handlers or DTOs directly under `internal/http/handler` or `internal/http/dto`?
+  - Default answer is no; use module subpackages.
+- Does this change create empty handler or DTO packages/files only to match the layout?
+  - Do not create empty `request.go`, `response.go`, or handler files.
+- Does this change need import aliases to avoid package-name ambiguity?
+  - Prefer aliases such as `systemhandler`, `authhandler`, `systemdto`, or `authdto` at call sites.
+
+Required output for this check:
+- The design note must state the handler and DTO module packages added, moved, or intentionally not created.
+- The implementation note must list file moves and package boundary changes.
+- If keeping a concrete business handler or DTO in a root `handler` / `dto` package, explain why in the design note.
+- If deviating from the module subpackage rule for architectural reasons, add or update an ADR before implementation.
+
 ### HTTP DTO boundary check
 
 Before design and implementation, check the HTTP DTO / VO / Value Object boundary:
 - Does this change add HTTP request or response structs?
-  - If yes, place them under `internal/http/dto`.
+  - If yes, place them under `internal/http/dto/<module>`.
 - Does this change add a concrete business response?
   - If yes, do not place it under `internal/http/response`; that package is only for the unified envelope and writer.
 - Does this change try to create `vo`?
   - Default answer is no.
-  - If it is an HTTP display object, rename it to `XxxResponse` and place it under `internal/http/dto`.
+  - If it is an HTTP display object, rename it to `XxxResponse` and place it under `internal/http/dto/<module>`.
   - If it is a DDD Value Object, place it under `internal/domain/<domain>` or `internal/domain/common`.
 - Does this change make service depend on `internal/http/dto`?
   - Default answer is no; introduce a service Command / Query instead.

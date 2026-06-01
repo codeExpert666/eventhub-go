@@ -14,15 +14,15 @@
 
 ## 2. 目标
 - 明确本项目不设置 `internal/http/vo`，也不保留其他 HTTP VO 目录。
-- 确认 HTTP request body、query 参数对象、path 参数辅助对象、HTTP response data、list item / summary / detail response 对象统一放 `internal/http/dto`。
+- 确认 HTTP request body、query 参数对象、path 参数辅助对象、HTTP response data、list item / summary / detail response 对象统一放 `internal/http/dto/<module>`。
 - 确认 `internal/http/response` 只放统一响应 envelope 和 writer，例如 `APIResponse`、`Success`、`Failure`、`WriteSuccess`、`WriteError`、`WriteJSON`、`WriteStatus`。
 - 确认 DDD Value Object 放 `internal/domain/<domain>` 或 `internal/domain/common`，不放 HTTP 层。
-- 审计 `internal/http/handler` 是否仍存在内嵌 request/response struct，并在发现时迁移到 `internal/http/dto`。
+- 审计 `internal/http/handler` 是否仍存在内嵌 request/response struct，并在发现时迁移到 `internal/http/dto/<module>`。
 - 审计 service 是否依赖 `internal/http/dto`，避免 HTTP 传输层类型向业务用例层泄漏。
 - 保持现有 API 路径、JSON 字段名、响应体 shape、错误码、校验行为和测试语义不变。
 - 成功标准：
   - 代码中没有 `internal/http/vo`、`internal/**/vo`、`*VO` HTTP 类型或误放在 `internal/http/response` 的具体业务 DTO。
-  - system 端点 request/response 结构体位于 `internal/http/dto`。
+  - system 端点 request/response 结构体位于 `internal/http/dto/system`。
   - service 使用 Command / Result 类型，不直接依赖 HTTP DTO。
   - `gofmt -w .`、`go test ./...`、`go vet ./...` 通过；如 Makefile 存在，`make fmt`、`make test`、`make vet` 通过。
 
@@ -52,7 +52,7 @@
   - 未发现文件名包含 `vo` 的 Go 文件。
   - 未发现类型名以 `VO` 结尾的 Go struct。
   - `internal/http/handler/system_handler.go` 只保留 handler、构造函数、HTTP 方法和 request validation，没有内嵌 HTTP request/response struct。
-  - `internal/http/dto/system_dto.go` 已承载 system 和 actuator HTTP 输出结构体：`PingResponse`、`EchoRequest`、`EchoResponse`、`HealthResponse`、`InfoResponse`、`AppInfoResponse`、`RuntimeInfoResponse`。
+  - 2026-06-02 后，system 和 actuator HTTP DTO 已由 `internal/http/dto/system/request.go`、`internal/http/dto/system/response.go` 承载：`PingResponse`、`EchoRequest`、`EchoResponse`、`HealthResponse`、`InfoResponse`、`AppInfoResponse`、`RuntimeInfoResponse`。
   - `internal/http/response` 只包含统一响应 envelope、writer 和相关测试，没有具体业务 API response DTO。
   - `internal/service/system` 使用 `EchoCommand`、`PingResult`、`EchoResult`、`HealthResult`、`InfoResult` 等 service 层类型，没有依赖 `internal/http/dto`。
 - 本次明确不触及的运行时代码目录：
@@ -72,12 +72,12 @@
   - API 路径、请求字段、响应字段、错误码、分页语义、OpenAPI 契约均不变化。
   - 不涉及数据库表、索引、migration、sqlc、缓存或外部接口。
 - 是否影响 `docs/ai/parity/java-go-parity-matrix.md`：
-  - 是。本次继续记录 Java `dto/request` 与 `vo` 命名习惯到 Go `internal/http/dto`、`internal/http/response` 和 `internal/domain` 的刻意结构差异，并补充本次审计结论索引。
+  - 是。本次继续记录 Java `dto/request` 与 `vo` 命名习惯到 Go `internal/http/dto/<module>`、`internal/http/response` 和 `internal/domain` 的刻意结构差异，并补充本次审计结论索引。
 
 ## 5. 领域建模
 - `HTTP DTO`：
   - HTTP 入参和出参的数据契约，包括 request body、query、path 参数辅助对象和 response data。
-  - Go 版统一放入 `internal/http/dto`，用 `Request`、`Response`、`ListItemResponse`、`SummaryResponse`、`DetailResponse` 等后缀表达用途。
+  - Go 版统一放入 `internal/http/dto/<module>`，用 `Request`、`Response`、`ListItemResponse`、`SummaryResponse`、`DetailResponse` 等后缀表达用途。
 - `Response envelope`：
   - 统一 API 响应外壳，例如 `APIResponse`，稳定表达 `code`、`message`、`data`、`requestId`、`timestamp`。
   - 只属于 `internal/http/response`。
@@ -93,10 +93,10 @@
   - service 用例输入和输出，不依赖 `internal/http/dto`。
   - 当前 system service 已使用 `EchoCommand` 和 result 类型承接 handler 映射。
 - 与 Java 版领域对象的对应关系：
-  - Java `modules/system/dto/request/EchoRequest` -> Go `internal/http/dto.EchoRequest`。
-  - Java `modules/system/vo/PingInfo` -> Go `internal/http/dto.PingResponse`。
-  - Java `modules/system/vo/EchoInfo` -> Go `internal/http/dto.EchoResponse`。
-  - Java `modules/auth/vo/LoginResponse`、`TokenPairResponse`、`UserInfo` 等未来迁移时，应落到 Go `internal/http/dto` 中的 `LoginResponse`、`TokenPairResponse`、`CurrentUserResponse` 或更明确的响应类型，而不是 `internal/http/vo`。
+  - Java `modules/system/dto/request/EchoRequest` -> Go `internal/http/dto/system.EchoRequest`。
+  - Java `modules/system/vo/PingInfo` -> Go `internal/http/dto/system.PingResponse`。
+  - Java `modules/system/vo/EchoInfo` -> Go `internal/http/dto/system.EchoResponse`。
+  - Java `modules/auth/vo/LoginResponse`、`TokenPairResponse`、`UserInfo` 等未来迁移时，应落到 Go `internal/http/dto/auth` 中的 `LoginResponse`、`TokenPairResponse`、`CurrentUserResponse` 或更明确的响应类型，而不是 `internal/http/vo`。
 
 ## 6. API 设计
 - 本次不新增或修改运行时 API。
@@ -142,9 +142,9 @@
   5. 检查 domain 或 repository 是否被迫承担 HTTP JSON 或 sqlc-to-handler 泄漏职责。
 - 当前代码调整计划：
   - 若审计继续保持当前结果，则不移动 Go 代码，只更新文档、ADR 和 parity matrix，记录已审计状态。
-  - 若后续新增业务 DTO，必须放入 `internal/http/dto`，handler 负责 DTO 与 service 类型映射。
-  - 若发现具体业务 response 被放入 `internal/http/response`，迁移到 `internal/http/dto` 并更新 import。
-  - 若发现 `VO` 类型代表 HTTP 展示对象，迁移到 `internal/http/dto` 并重命名为 `XxxResponse`、`XxxListItemResponse`、`XxxSummaryResponse` 或 `XxxDetailResponse`。
+  - 若后续新增业务 DTO，必须放入 `internal/http/dto/<module>`，handler 负责 DTO 与 service 类型映射。
+  - 若发现具体业务 response 被放入 `internal/http/response`，迁移到 `internal/http/dto/<module>` 并更新 import。
+  - 若发现 `VO` 类型代表 HTTP 展示对象，迁移到 `internal/http/dto/<module>` 并重命名为 `XxxResponse`、`XxxListItemResponse`、`XxxSummaryResponse` 或 `XxxDetailResponse`。
   - 若发现 `VO` 类型代表 DDD Value Object，迁移到 `internal/domain/<domain>` 或 `internal/domain/common`，并改名为明确业务名。
 - 正常运行流程保持：
   1. handler decode 并 validate HTTP DTO。
