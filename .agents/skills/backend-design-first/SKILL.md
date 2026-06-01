@@ -91,6 +91,31 @@ Required output for this check:
 - The implementation note must state the mapping between DTOs, service commands/queries, service results, and domain models.
 - If deviating from the DTO boundary, add or update an ADR before implementation.
 
+### Service contract boundary check
+
+Before design and implementation, check the service Command / Query / Result boundary:
+- Does this change add or modify service input types?
+  - Write-side use-case inputs must be named `XxxCommand`.
+  - Read/list/search/detail inputs must be named `XxxQuery`.
+  - Put them in `internal/service/<domain>/command.go` or `query.go` within the same service package.
+- Does this change add or modify service output types?
+  - Service outputs must be named `XxxResult` or a narrowly scoped result helper such as `XxxSummary`, `XxxItem`, or `XxxSnapshot`.
+  - Put them in `internal/service/<domain>/result.go`.
+- Does this change put Service struct, dependencies, commands, queries, results, and multiple use cases into one large `service.go`?
+  - Default answer is no; keep `service.go` for `Service`, constructor, and dependency fields.
+  - Put business methods in use-case files such as `register.go`, `login.go`, `create_event.go`, or `reserve_ticket.go`.
+- Does this change create empty files only to match the layout?
+  - Do not create empty `query.go`, `errors.go`, or use-case files. Add files only when they contain real types or methods.
+- Does this change add HTTP `json` tags to Command / Query / Result?
+  - Default answer is no; service contracts are not HTTP DTOs.
+- Does this change expose sqlc generated models through service results?
+  - This is forbidden; map through repository/mysql and domain or service result types.
+
+Required output for this check:
+- The design note must state the service files added, split, or intentionally not created.
+- The implementation note must list service file moves and package boundary changes.
+- If deviating from the service contract boundary, explain why in the design note and update an ADR when the deviation is architectural.
+
 ## Step 3: Design Before Implementation
 Produce a concise design that covers:
 - domain objects
@@ -120,6 +145,11 @@ Make the smallest change set that closes the target loop.
 
 Respect the Go layering boundary:
 - `handler -> service -> repository -> sqlc/database`
+
+Keep service package internals readable:
+- `service.go` holds `Service`, constructor, and dependency fields.
+- `command.go`, `query.go`, and `result.go` hold service contracts when those types exist.
+- use-case methods live in focused files instead of accumulating indefinitely in `service.go`.
 
 Do not let handlers access database/sql, sqlc queries, or transaction handles directly.
 Do not use `panic` for business errors.

@@ -55,6 +55,17 @@ YYYY-MM-DD-主题.md
 - 涉及 DTO 边界调整时，属于非微小修改，必须更新 design / implementation note / parity matrix。
 - 若引入例外，必须写 ADR。
 
+## Service Contract 规范
+
+- `internal/service/<domain>/service.go` 只放 `Service`、constructor 和依赖字段。
+- service 写操作输入放 `command.go`，命名为 `XxxCommand`。
+- service 读/列表/搜索/详情输入放 `query.go`，命名为 `XxxQuery`；没有 Query 时不要创建空文件。
+- service 输出放 `result.go`，命名为 `XxxResult` 或窄范围内部结果类型。
+- 业务方法按 use case 拆到 `register.go`、`login.go`、`create_event.go` 等文件。
+- Command / Query / Result 不带 HTTP `json` tag，不使用 `XxxRequest`、`XxxResponse`、`XxxDTO`、`XxxVO`、`XxxResp` 后缀。
+- service 不依赖 `internal/http/dto`，不暴露 sqlc generated model。
+- 涉及 service contract 边界调整时，属于非微小修改，必须更新 design / implementation note / parity matrix；架构性例外需要更新 ADR。
+
 ## Parity 文档约定
 
 Parity 文档不是设计文档、实现说明或 ADR 的替代品，而是 Java-Go 对齐状态的索引和台账。

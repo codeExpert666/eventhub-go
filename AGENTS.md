@@ -227,6 +227,7 @@ eventhub-go/
 - 这是 HTTP 传输层代码吗？如果是，放 `internal/http`。
 - 这是请求/响应 DTO 吗？如果是，放 `internal/http/dto`。
 - 这是业务用例吗？如果是，放 `internal/service/<domain>`。
+- 这是 service Command / Query / Result 吗？如果是，放 `internal/service/<domain>` 内的 `command.go`、`query.go` 或 `result.go`。
 - 这是领域模型或枚举吗？如果是，放 `internal/domain/<domain>` 或 `internal/domain/common`。
 - 这是 repository interface 吗？如果是，放 `internal/repository`。
 - 这是 MySQL repository 实现吗？如果是，放 `internal/repository/mysql`。
@@ -291,12 +292,75 @@ eventhub-go/
 | 列表项响应 | `internal/http/dto` | `AdminUserListItemResponse` |
 | 统一响应 envelope | `internal/http/response` | `APIResponse` |
 | 响应写出工具 | `internal/http/response` | `WriteSuccess` |
-| service 输入 | `internal/service/<domain>` | `RegisterCommand` |
+| service 写输入 | `internal/service/<domain>/command.go` | `RegisterCommand` |
+| service 读输入 | `internal/service/<domain>/query.go` | `ListAdminUsersQuery` |
+| service 输出 | `internal/service/<domain>/result.go` | `LoginResult` |
 | domain model | `internal/domain/<domain>` | `User` |
 | domain value object | `internal/domain/<domain>` 或 `common` | `Email`, `Money` |
 | sqlc row | `internal/repository/mysql/sqlc` | `sqlc.User` |
 
-### 7.6 禁止偏离规则
+### 7.6 Service Command / Query / Result 文件边界
+
+service 层既承载业务规则，也承载 handler 与业务用例之间的输入输出契约。为了避免复杂模块把依赖、输入、输出和业务方法都堆在一个大文件中，新增或调整 service package 时遵守以下规则：
+
+1. `internal/service/<domain>/service.go` 只放：
+   - `Service` struct
+   - constructor，例如 `NewService`
+   - 依赖字段和非常少量的装配辅助
+2. 写操作输入放 `command.go`：
+   - `RegisterCommand`
+   - `LoginCommand`
+   - `CreateEventCommand`
+   - `UpdateUserStatusCommand`
+3. 读操作、列表、搜索、详情输入放 `query.go`：
+   - `ListAdminUsersQuery`
+   - `GetCurrentUserQuery`
+   - `SearchEventsQuery`
+   - `GetEventDetailQuery`
+4. service 输出放 `result.go`：
+   - `RegisterResult`
+   - `LoginResult`
+   - `EventDetailResult`
+   - 仅供 service 输出使用的 `XxxSummary`、`XxxItem`、`XxxSnapshot` 等内部结果类型
+5. 真正业务方法按 use case 拆文件：
+   - `register.go`
+   - `login.go`
+   - `refresh_token.go`
+   - `create_event.go`
+   - `reserve_ticket.go`
+6. 不要创建空文件凑结构：
+   - 没有 Query 类型时，不创建空 `query.go`。
+   - 没有复杂 use case 时，可以先保留较少文件，但不能把多个复杂用例长期堆在 `service.go`。
+7. service contract 命名规则：
+   - 写输入用 `XxxCommand`。
+   - 读输入用 `XxxQuery`。
+   - 输出用 `XxxResult`。
+   - 不使用 `XxxRequest`、`XxxResponse`、`XxxDTO`、`XxxVO`、`XxxResp` 作为 service 类型后缀。
+8. service Command / Query / Result 不带 HTTP `json` tag，不承担 HTTP 契约。
+9. service 不依赖 `internal/http/dto`；handler 负责 DTO 与 Command / Query / Result 的映射。
+10. service Result 可以包含 domain model、domain value object 或 service 层结果类型，但不能直接暴露 sqlc generated model。
+
+推荐结构：
+
+```text
+internal/service/<domain>/
+  service.go      // Service struct、constructor、依赖字段
+  command.go      // 写操作输入 XxxCommand
+  query.go        // 读/列表/搜索输入 XxxQuery；没有 Query 时不创建
+  result.go       // service 输出 XxxResult 和内部结果项
+  <usecase>.go    // 业务方法，例如 register.go、login.go、create_event.go
+  errors.go       // service 层业务错误辅助；有需要时创建
+```
+
+| 类型 | 放置位置 | 示例 |
+|---|---|---|
+| service 依赖与构造 | `internal/service/<domain>/service.go` | `Service`, `NewService` |
+| service 写输入 | `internal/service/<domain>/command.go` | `RegisterCommand` |
+| service 读输入 | `internal/service/<domain>/query.go` | `ListAdminUsersQuery` |
+| service 输出 | `internal/service/<domain>/result.go` | `LoginResult` |
+| service 用例方法 | `internal/service/<domain>/<usecase>.go` | `register.go` |
+
+### 7.7 禁止偏离规则
 - 不要把业务逻辑写进 `cmd/eventhub/main.go`。
 - 不要让 handler 直接访问 sqlc、`database/sql`、redis。
 - 不要让 domain 依赖 HTTP DTO。
@@ -305,6 +369,7 @@ eventhub-go/
 - 不要在 `repository/mysql` 中做 HTTP 错误响应。
 - 不要在 service 中拼 HTTP JSON。
 - 不要为了少写文件而把 handler、service、repository 混在一个文件。
+- 不要为了少写文件而把 service 的 Command / Query / Result 和多个复杂业务方法长期堆在 `service.go`。
 - 不要把 request DTO 当 domain model 长期使用。
 - 不要用 `panic` 表达业务错误。
 - 不要把角色、邮箱、用户名、用户状态写入 JWT。
