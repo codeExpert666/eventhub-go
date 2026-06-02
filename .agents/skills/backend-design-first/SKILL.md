@@ -6,6 +6,7 @@ description: Use this skill when implementing or modifying backend features in t
 # Purpose
 
 This skill keeps the Go port educational, reviewable, and aligned with the Java EventHub business contract.
+It is intentionally lightweight: AGENTS.md is the source of detailed project rules, while this file is the execution checklist.
 
 Use this skill for:
 - new backend features
@@ -23,7 +24,7 @@ Do not use this skill for:
 
 # Required Workflow
 
-## Step 1: Understand And Scope
+## Step 1: Scope
 Before editing code, summarize:
 - goal
 - Java behavior or document source being mirrored
@@ -32,114 +33,26 @@ Before editing code, summarize:
 - important assumptions
 - risks
 
-## Step 2: Structure Conformance Check
+## Step 2: Preflight Checks
 
-### Structure conformance check
+Before design and implementation, check the relevant AGENTS.md rules instead of duplicating them here:
+- layering and package layout: AGENTS.md sections 6 and 7
+- HTTP handler / DTO boundaries: AGENTS.md sections 7.5 and 7.6
+- service Command / Query / Result boundaries: AGENTS.md section 7.7
+- dependency and interface rules: AGENTS.md section 7.8
+- API, error, data, and JWT constraints: AGENTS.md section 8
+- verification expectations: AGENTS.md sections 9 and 11
 
-Before design and implementation, confirm which layers this change touches:
-- cmd
-- app
-- config
-- platform
-- http/router
-- http/middleware
-- http/handler
-- http/dto
-- http/response
-- http/validation
-- apperror
-- page
-- domain
-- service
-- repository interface
-- repository/mysql
-- repository/mysql/queries
-- repository/mysql/sqlc
-- security
-- api/openapi
-- migrations
-- configs
-- docs
+The design note must state:
+- touched layers / packages, and important packages intentionally not touched
+- DTO, service contract, repository, and dependency-boundary changes when applicable
+- any deviation from AGENTS.md, with ADR follow-up when the deviation is architectural
 
-Required output for this check:
-- The design note must state the directories touched and the directories explicitly not touched.
-- If creating directories or moving packages, explain why.
-- If deviating from the AGENTS.md package layout, explain why and add or update an ADR.
-- After implementation, the implementation note must list file moves and package boundary changes.
-- The final "Risks / follow-ups" summary must state whether any structure debt remains.
-
-### HTTP handler / DTO module package check
-
-Before design and implementation, check the HTTP module package layout:
-- Does this change add or modify a concrete business HTTP handler?
-  - Default location is `internal/http/handler/<module>`.
-  - Use `handler.go` for the handler struct, constructor, and dependency fields.
-  - Split complex use cases into files such as `register.go`, `login.go`, `list_admin_users.go`, or `create_event.go`.
-- Does this change add or modify HTTP request / response DTOs?
-  - Default location is `internal/http/dto/<module>`.
-  - Put request body, query objects, and path helper objects in `request.go`.
-  - Put response data, list item, summary, and detail response objects in `response.go`.
-  - If a module has many DTOs, split by use case inside the same module package.
-- Does this change place concrete business handlers or DTOs directly under `internal/http/handler` or `internal/http/dto`?
-  - Default answer is no; use module subpackages.
-- Does this change create empty handler or DTO packages/files only to match the layout?
-  - Do not create empty `request.go`, `response.go`, or handler files.
-- Does this change need import aliases to avoid package-name ambiguity?
-  - Prefer aliases such as `systemhandler`, `authhandler`, `systemdto`, or `authdto` at call sites.
-
-Required output for this check:
-- The design note must state the handler and DTO module packages added, moved, or intentionally not created.
-- The implementation note must list file moves and package boundary changes.
-- If keeping a concrete business handler or DTO in a root `handler` / `dto` package, explain why in the design note.
-- If deviating from the module subpackage rule for architectural reasons, add or update an ADR before implementation.
-
-### HTTP DTO boundary check
-
-Before design and implementation, check the HTTP DTO / VO / Value Object boundary:
-- Does this change add HTTP request or response structs?
-  - If yes, place them under `internal/http/dto/<module>`.
-- Does this change add a concrete business response?
-  - If yes, do not place it under `internal/http/response`; that package is only for the unified envelope and writer.
-- Does this change try to create `vo`?
-  - Default answer is no.
-  - If it is an HTTP display object, rename it to `XxxResponse` and place it under `internal/http/dto/<module>`.
-  - If it is a DDD Value Object, place it under `internal/domain/<domain>` or `internal/domain/common`.
-- Does this change make service depend on `internal/http/dto`?
-  - Default answer is no; introduce a service Command / Query instead.
-- Does this change add `json` tags to a domain type?
-  - Default answer is avoid it unless there is an explicit design reason and the reason is documented.
-- Does this change expose a sqlc generated model to a handler or DTO?
-  - This is forbidden; map through repository/mysql and domain models.
-
-Required output for this check:
-- The design note must state any DTOs added or modified by the change.
-- The implementation note must state the mapping between DTOs, service commands/queries, service results, and domain models.
-- If deviating from the DTO boundary, add or update an ADR before implementation.
-
-### Service contract boundary check
-
-Before design and implementation, check the service Command / Query / Result boundary:
-- Does this change add or modify service input types?
-  - Write-side use-case inputs must be named `XxxCommand`.
-  - Read/list/search/detail inputs must be named `XxxQuery`.
-  - Put them in `internal/service/<domain>/command.go` or `query.go` within the same service package.
-- Does this change add or modify service output types?
-  - Service outputs must be named `XxxResult` or a narrowly scoped result helper such as `XxxSummary`, `XxxItem`, or `XxxSnapshot`.
-  - Put them in `internal/service/<domain>/result.go`.
-- Does this change put Service struct, dependencies, commands, queries, results, and multiple use cases into one large `service.go`?
-  - Default answer is no; keep `service.go` for `Service`, constructor, and dependency fields.
-  - Put business methods in use-case files such as `register.go`, `login.go`, `create_event.go`, or `reserve_ticket.go`.
-- Does this change create empty files only to match the layout?
-  - Do not create empty `query.go`, `errors.go`, or use-case files. Add files only when they contain real types or methods.
-- Does this change add HTTP `json` tags to Command / Query / Result?
-  - Default answer is no; service contracts are not HTTP DTOs.
-- Does this change expose sqlc generated models through service results?
-  - This is forbidden; map through repository/mysql and domain or service result types.
-
-Required output for this check:
-- The design note must state the service files added, split, or intentionally not created.
-- The implementation note must list service file moves and package boundary changes.
-- If deviating from the service contract boundary, explain why in the design note and update an ADR when the deviation is architectural.
+The implementation note must state:
+- file moves and package boundary changes
+- DTO -> Command / Query -> Result / domain mappings when applicable
+- concrete types, interfaces, and test doubles introduced, retained, removed, or intentionally avoided
+- whether structure debt remains
 
 ## Step 3: Design Before Implementation
 Produce a concise design that covers:
@@ -153,7 +66,7 @@ Produce a concise design that covers:
 - Java-Go parity expectations
 - testing strategy
 
-## Step 4: Document The Design
+## Step 4: Document Design
 Before writing the design note, read and follow:
 - `docs/templates/design-template.md`
 
@@ -165,20 +78,17 @@ Suggested filename:
 
 Keep the same section order as the template unless the task clearly needs a different structure. If the structure changes, explain why in the document.
 
-## Step 5: Implement The Smallest Viable Slice
+## Step 5: Implement
 Make the smallest change set that closes the target loop.
 
-Respect the Go layering boundary:
+Core boundaries to preserve:
 - `handler -> service -> repository -> sqlc/database`
-
-Keep service package internals readable:
-- `service.go` holds `Service`, constructor, and dependency fields.
-- `command.go`, `query.go`, and `result.go` hold service contracts when those types exist.
-- use-case methods live in focused files instead of accumulating indefinitely in `service.go`.
-
-Do not let handlers access database/sql, sqlc queries, or transaction handles directly.
-Do not use `panic` for business errors.
-Do not put roles, email, username, or user status into JWT claims.
+- concrete types by default; interfaces only for stable boundaries or capability-owner packages
+- `internal/app/bootstrap` wires objects; `internal/http/router` binds routes
+- handlers do not access database/sql, sqlc queries, or transaction handles directly
+- service does not import `repository/mysql`, sqlc generated packages, or `database/sql`
+- business errors use explicit errors, not `panic`
+- JWT claims do not include roles, email, username, or user status
 
 ## Step 6: Verify
 Run the smallest relevant verification that is feasible in the current repository:
@@ -214,17 +124,8 @@ The implementation note must answer:
 ## Step 8: Document Java-Go Parity
 Before finishing, check whether the change affects Java-Go parity.
 
-Read and update when applicable:
+Read and update when the change touches API contracts, errors, data, workflows, auth/security, tests, repository behavior, or intentional Go-only structure:
 - `docs/ai/parity/java-go-parity-matrix.md`
-
-Update the parity matrix when the task touches any of these:
-- API paths, methods, request fields, response fields, status codes, pagination semantics, or OpenAPI contracts
-- error codes, error messages, validation behavior, or business failure semantics
-- database tables, columns, indexes, unique constraints, enum/status values, migrations, sqlc queries, or repository behavior
-- business workflows, state machines, concurrency behavior, idempotency behavior, cache behavior, or transaction boundaries
-- authentication, authorization, JWT claims, auth sessions, refresh tokens, or security boundaries
-- testing strategy, fixtures, Java test parity, migration tests, or contract tests
-- intentional Go-only implementation choices that preserve Java business semantics while using different structure
 
 Each parity update should record:
 - Java source or document reference
@@ -236,26 +137,12 @@ Each parity update should record:
 If no parity update is needed, say why in the implementation note or final verification summary.
 
 ## Step 9: ADR When Needed
-If the task introduces a meaningful architectural or engineering trade-off, first read:
+If the task introduces a meaningful architectural or engineering trade-off, read:
 - `docs/templates/adr-template.md`
 
 Then add or update:
 - `docs/ai/adr/`
 
-Examples:
-- choosing sqlc as the persistence code generation boundary
-- choosing optimistic locking vs database conditional update
-- choosing synchronous flow vs event-driven flow
-- choosing monolith package boundary or service split
-- changing JWT claim boundaries or auth session semantics
-
 # Output Format After Completion
 
-Always end with:
-1. Design summary
-2. Code change summary
-3. Rationale
-4. Alternatives
-5. Risks / follow-ups
-6. Updated documentation files
-7. Verification results
+Use the completion summary format in AGENTS.md section 12.

@@ -408,7 +408,24 @@ internal/service/<domain>/
 | service 输出 | `internal/service/<domain>/result.go` | `LoginResult` |
 | service 用例方法 | `internal/service/<domain>/<usecase>.go` | `register.go` |
 
-### 7.8 禁止偏离规则
+### 7.8 依赖组织与接口使用规则
+
+本项目用显式依赖关系表达分层边界。接口用于稳定业务边界或跨 package 能力边界，不用于“未来可能替换”式预抽象：
+
+1. 默认使用具体类型，不要因为“未来可能替换”或“方便 mock”提前抽接口。
+2. handler 默认直接依赖具体 service，例如 `*authsvc.Service`，不要在 handler 包内定义重复的 `AuthService`、`UserService` 之类接口。
+3. service 默认依赖具体组件，不应在自身 package 内定义一堆外部能力接口，例如 `PasswordHasher`、`TokenIssuer`、`RefreshTokenManager`、`UserReader`。如果确实需要接口，接口应放在能力所属 package，例如 `security/password`、`security/jwt`、`security/refresh`，或作为稳定业务边界放在合适 package。
+4. repository interface 可以保留，因为它是 `service -> repository -> sqlc/database` 的持久化边界，避免 service 直接依赖 `repository/mysql`、sqlc generated code 或 `database/sql`。
+5. repository interface 必须表达业务持久化语义，不能只是对 sqlc 方法的一对一机械包装。
+6. router 不使用 functional options 做内部应用装配，除非确实存在公共库式 API 或大量独立可选能力。当前项目优先使用显式结构体注入，例如 `RouterDependencies`。
+7. `internal/app/bootstrap` 是 composition root，负责创建 config、logger、db、repository、service、handler 和 middleware。
+8. `internal/http/router` 只负责 URL、HTTP method、中间件和 handler 方法绑定，不创建 service，不承担业务对象装配。
+9. 构造函数可以使用 `Dependencies` struct，但字段应是具体类型或稳定边界接口，避免把 service package 变成接口集散地。
+10. 测试不要反向驱动生产代码过度抽象；优先使用真实 service + fake repository，或 handler/router 集成测试。
+11. 出现依赖边界重构时，必须按非微小修改流程更新 `docs/ai/design`、`docs/ai/implementation`，必要时更新 ADR 和 `docs/ai/parity/java-go-parity-matrix.md`。
+12. 任何依赖组织调整都必须保持 `handler -> service -> repository -> sqlc/database`，不要让 service 直接 import `repository/mysql`。
+
+### 7.9 禁止偏离规则
 - 不要把业务逻辑写进 `cmd/eventhub/main.go`。
 - 不要让 handler 直接访问 sqlc、`database/sql`、redis。
 - 不要让 domain 依赖 HTTP DTO。
