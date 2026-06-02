@@ -1,16 +1,35 @@
+# sqlc 配置版本。version: "2" 表示使用 sqlc v2 配置格式。
 version: "2"
+
+# SQL 生成配置列表。每一项描述一组数据库方言、schema、query 和目标语言生成规则。
 sql:
+  # 当前项目使用 MySQL 作为数据库方言，sqlc 会按 MySQL 语法解析 migration 和 query。
   - engine: "mysql"
+
+    # 数据库 schema 来源。这里使用向上迁移文件作为表结构、索引和约束的定义来源。
     schema:
+      # 系统启动相关基础表结构。
       - "migrations/000001_system_bootstrap.up.sql"
+      # 认证与会话相关表结构。
       - "migrations/000002_auth_schema.up.sql"
+
+    # SQL 查询文件目录。sqlc 会扫描该目录下的查询定义并生成类型安全的 Go 方法。
     queries:
       - "internal/repository/mysql/queries"
+
+    # 代码生成配置。
     gen:
+      # Go 代码生成目标配置。
       go:
+        # 生成代码所在的 Go package 名称。
         package: "sqlc"
+        # 生成文件输出目录；repository/mysql 包通过该目录中的类型和查询方法访问数据库。
         out: "internal/repository/mysql/sqlc"
+        # 使用标准库 database/sql 作为底层 SQL 包，避免额外数据库驱动抽象泄漏到生成代码。
         sql_package: "database/sql"
+        # 不为生成结构体添加 JSON tag，避免 sqlc model 被误用为 HTTP DTO。
         emit_json_tags: false
+        # 不生成显式 prepared statement 复用代码；当前生成代码直接通过 database/sql 执行参数化查询。
         emit_prepared_queries: false
+        # 不生成 Queries 接口；repository 层自行定义持久化接口，避免暴露 sqlc 细节。
         emit_interface: false
