@@ -24,6 +24,7 @@ func (t *Transactor) WithinTx(ctx context.Context, fn func(context.Context) erro
 	if t == nil || t.db == nil {
 		return errors.New("transactor database is nil")
 	}
+	// 已有事务表示当前调用嵌套在外层事务内，提交或回滚由外层事务创建者负责。
 	if _, ok := TxFromContext(ctx); ok {
 		return fn(ctx)
 	}
@@ -32,6 +33,7 @@ func (t *Transactor) WithinTx(ctx context.Context, fn func(context.Context) erro
 	if err != nil {
 		return err
 	}
+	// 延迟回滚用于兜底错误路径；事务提交成功后 Rollback 会变成已结束错误，可忽略。
 	defer func() {
 		_ = tx.Rollback()
 	}()
