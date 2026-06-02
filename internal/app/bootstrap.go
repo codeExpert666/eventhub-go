@@ -8,7 +8,11 @@ import (
 
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
+	authhandler "eventhub-go/internal/http/handler/auth"
+	systemhandler "eventhub-go/internal/http/handler/system"
+	userhandler "eventhub-go/internal/http/handler/user"
 	"eventhub-go/internal/http/middleware"
+	"eventhub-go/internal/platform/clock"
 	platformdb "eventhub-go/internal/platform/db"
 	platformlog "eventhub-go/internal/platform/log"
 	repositorymysql "eventhub-go/internal/repository/mysql"
@@ -16,6 +20,7 @@ import (
 	"eventhub-go/internal/security/password"
 	"eventhub-go/internal/security/refresh"
 	authsvc "eventhub-go/internal/service/auth"
+	systemsvc "eventhub-go/internal/service/system"
 	usersvc "eventhub-go/internal/service/user"
 )
 
@@ -41,15 +46,16 @@ func Bootstrap() (*Application, error) {
 	logger := platformlog.New(cfg)
 	slog.SetDefault(logger)
 
-	routerOptions, database, err := buildRouterOptions(context.Background(), cfg, logger)
+	routerDependencies, database, err := buildRouterDependencies(context.Background(), cfg, logger)
 	if err != nil {
 		return nil, err
 	}
+	router := apphttp.NewRouter(logger, routerDependencies)
 
 	// app 包只做进程级依赖装配，HTTP 细节继续由 internal/http 封装。
 	return &Application{
 		logger:   logger,
-		server:   apphttp.NewServer(cfg, logger, routerOptions...),
+		server:   apphttp.NewServer(cfg, logger, router),
 		database: database,
 	}, nil
 }
@@ -62,14 +68,19 @@ func (a *Application) Close() error {
 	return a.database.Close()
 }
 
-func buildRouterOptions(
+func buildRouterDependencies(
 	ctx context.Context,
 	cfg config.Config,
 	logger *slog.Logger,
-) ([]apphttp.RouterOption, *sql.DB, error) {
+) (apphttp.RouterDependencies, *sql.DB, error) {
+	systemService := systemsvc.NewService(cfg, clock.RealClock{})
+	deps := apphttp.RouterDependencies{
+		System: systemhandler.NewHandler(systemService),
+	}
+
 	if cfg.Database.DSN == "" {
 		logger.Warn("mysql dsn is not configured; auth routes are not registered")
-		return nil, nil, nil
+		return deps, nil, nil
 	}
 
 	database, err := platformdb.OpenMySQL(ctx, platformdb.Config{
@@ -80,7 +91,7 @@ func buildRouterOptions(
 		ConnMaxIdleTime: cfg.Database.ConnMaxIdleTime,
 	})
 	if err != nil {
-		return nil, nil, err
+		return apphttp.RouterDependencies{}, nil, err
 	}
 
 	jwtCodec, err := jwt.NewCodec(jwt.Config{
@@ -90,7 +101,7 @@ func buildRouterOptions(
 	})
 	if err != nil {
 		_ = database.Close()
-		return nil, nil, err
+		return apphttp.RouterDependencies{}, nil, err
 	}
 
 	userRepo := repositorymysql.NewUserRepository(database)
@@ -106,11 +117,13 @@ func buildRouterOptions(
 		Passwords:    password.NewBCryptHasher(),
 		Tokens:       jwtCodec,
 		RefreshToken: refresh.NewManager(cfg.AuthToken.RefreshTokenTTL),
-		UserReader:   userService,
+		UserService:  userService,
 	})
 	authMiddleware := middleware.NewAuth(jwtCodec, userService)
 
-	return []apphttp.RouterOption{
-		apphttp.WithAuth(authService, userService, authMiddleware),
-	}, database, nil
+	deps.Auth = authhandler.NewHandler(authService)
+	deps.User = userhandler.NewHandler(userService)
+	deps.AuthMiddleware = authMiddleware
+
+	return deps, database, nil
 }

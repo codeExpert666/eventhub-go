@@ -75,5 +75,5 @@ func (s *Service) Register(ctx context.Context, command RegisterCommand) (usersv
 		return usersvc.UserResult{}, err
 	}
 
-	return s.userReader.GetByID(ctx, created.ID)
+	return s.userService.GetByID(ctx, created.ID)
 }

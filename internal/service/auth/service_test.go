@@ -10,16 +10,19 @@ import (
 	"time"
 
 	drivermysql "github.com/go-sql-driver/mysql"
+	"golang.org/x/crypto/bcrypt"
 
 	"eventhub-go/internal/apperror"
 	"eventhub-go/internal/repository"
+	"eventhub-go/internal/security/jwt"
+	"eventhub-go/internal/security/password"
 	"eventhub-go/internal/security/refresh"
 	usersvc "eventhub-go/internal/service/user"
 )
 
 func TestRegisterCreatesEnabledUserWithDefaultRole(t *testing.T) {
 	ctx := context.Background()
-	fixture := newAuthServiceFixture()
+	fixture := newAuthServiceFixture(t)
 
 	user, err := fixture.service.Register(ctx, RegisterCommand{
 		Username: "alice",
@@ -37,14 +40,21 @@ func TestRegisterCreatesEnabledUserWithDefaultRole(t *testing.T) {
 		t.Fatalf("expected USER role, got %v", user.Roles)
 	}
 	stored := fixture.store.userByID(user.ID)
-	if stored.PasswordHash == "Password123" || !strings.HasPrefix(stored.PasswordHash, "hash:") {
+	if stored.PasswordHash == "Password123" || !strings.HasPrefix(stored.PasswordHash, "$2") {
 		t.Fatalf("unexpected password hash: %s", stored.PasswordHash)
+	}
+	matches, err := fixture.service.passwords.Matches("Password123", stored.PasswordHash)
+	if err != nil {
+		t.Fatalf("match password: %v", err)
+	}
+	if !matches {
+		t.Fatal("expected stored password hash to match original password")
 	}
 }
 
 func TestRegisterRejectsDuplicateUsername(t *testing.T) {
 	ctx := context.Background()
-	fixture := newAuthServiceFixture()
+	fixture := newAuthServiceFixture(t)
 	if _, err := fixture.service.Register(ctx, RegisterCommand{
 		Username: "alice",
 		Email:    "alice@example.com",
@@ -64,7 +74,7 @@ func TestRegisterRejectsDuplicateUsername(t *testing.T) {
 
 func TestRegisterMapsDatabaseUniqueConstraintToAuthConflict(t *testing.T) {
 	ctx := context.Background()
-	fixture := newAuthServiceFixture()
+	fixture := newAuthServiceFixture(t)
 	fixture.store.forceCreateUniqueErr = true
 
 	_, err := fixture.service.Register(ctx, RegisterCommand{
@@ -78,7 +88,7 @@ func TestRegisterMapsDatabaseUniqueConstraintToAuthConflict(t *testing.T) {
 
 func TestLoginCreatesActiveSessionAndReturnsTokenPair(t *testing.T) {
 	ctx := context.Background()
-	fixture := newAuthServiceFixture()
+	fixture := newAuthServiceFixture(t)
 	registered, err := fixture.service.Register(ctx, RegisterCommand{
 		Username: "alice",
 		Email:    "alice@example.com",
@@ -120,7 +130,7 @@ func TestLoginCreatesActiveSessionAndReturnsTokenPair(t *testing.T) {
 
 func TestLoginRejectsWrongPasswordWithoutCreatingSession(t *testing.T) {
 	ctx := context.Background()
-	fixture := newAuthServiceFixture()
+	fixture := newAuthServiceFixture(t)
 	if _, err := fixture.service.Register(ctx, RegisterCommand{
 		Username: "alice",
 		Email:    "alice@example.com",
@@ -142,7 +152,7 @@ func TestLoginRejectsWrongPasswordWithoutCreatingSession(t *testing.T) {
 
 func TestLoginRejectsDisabledUser(t *testing.T) {
 	ctx := context.Background()
-	fixture := newAuthServiceFixture()
+	fixture := newAuthServiceFixture(t)
 	user, err := fixture.service.Register(ctx, RegisterCommand{
 		Username: "alice",
 		Email:    "alice@example.com",
@@ -174,21 +184,30 @@ type authServiceFixture struct {
 	service  *Service
 }
 
-func newAuthServiceFixture() authServiceFixture {
+func newAuthServiceFixture(t *testing.T) authServiceFixture {
+	t.Helper()
 	store := newAuthServiceTestStore()
 	users := &authServiceUserRepo{store: store}
 	roles := &authServiceRoleRepo{store: store}
 	sessions := &authServiceSessionRepo{store: store}
 	userService := usersvc.NewService(users, roles)
+	codec, err := jwt.NewCodec(jwt.Config{
+		Issuer:        "eventhub-backend",
+		SigningSecret: "eventhub-test-access-token-secret-for-service-tests",
+		AccessTTL:     30 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("new jwt codec: %v", err)
+	}
 	service := NewService(Dependencies{
 		Users:        users,
 		Roles:        roles,
 		Sessions:     sessions,
 		Transactor:   noopTransactor{},
-		Passwords:    testPasswordHasher{},
-		Tokens:       testTokenIssuer{ttl: 30 * time.Minute},
+		Passwords:    password.NewBCryptHasherWithCost(bcrypt.MinCost),
+		Tokens:       codec,
 		RefreshToken: refresh.NewManager(30 * 24 * time.Hour),
-		UserReader:   userService,
+		UserService:  userService,
 		Clock:        testClock{now: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)},
 	})
 	return authServiceFixture{
@@ -204,28 +223,6 @@ type noopTransactor struct{}
 
 func (noopTransactor) WithinTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
-}
-
-type testPasswordHasher struct{}
-
-func (testPasswordHasher) Hash(plain string) (string, error) {
-	return "hash:" + plain, nil
-}
-
-func (testPasswordHasher) Matches(plain, hashed string) (bool, error) {
-	return hashed == "hash:"+plain, nil
-}
-
-type testTokenIssuer struct {
-	ttl time.Duration
-}
-
-func (i testTokenIssuer) IssueAccessToken(subjectID int64, sessionID string) (string, error) {
-	return "access:" + sessionID, nil
-}
-
-func (i testTokenIssuer) AccessTokenTTL() time.Duration {
-	return i.ttl
 }
 
 type testClock struct {

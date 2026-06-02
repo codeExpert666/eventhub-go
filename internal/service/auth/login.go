@@ -35,7 +35,7 @@ func (s *Service) Login(ctx context.Context, command LoginCommand) (LoginResult,
 			return disabledUserError()
 		}
 
-		userInfo, err := s.userReader.GetByID(txCtx, foundUser.ID)
+		userInfo, err := s.userService.GetByID(txCtx, foundUser.ID)
 		if err != nil {
 			return err
 		}

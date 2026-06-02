@@ -13,8 +13,11 @@ import (
 
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
+	systemhandler "eventhub-go/internal/http/handler/system"
 	"eventhub-go/internal/http/middleware"
+	"eventhub-go/internal/platform/clock"
 	"eventhub-go/internal/platform/idgen"
+	systemsvc "eventhub-go/internal/service/system"
 )
 
 func TestPingReturnsWrappedSuccessResponse(t *testing.T) {
@@ -284,12 +287,16 @@ func TestPanicRecoverDoesNotWriteErrorAfterCommittedResponse(t *testing.T) {
 }
 
 func testRouter() nethttp.Handler {
-	return apphttp.NewRouter(config.Config{
+	cfg := config.Config{
 		AppName: "eventhub-backend",
 		Env:     config.EnvTest,
 		Version: "test",
 		Log:     config.LogConfig{Level: slog.LevelError},
-	}, testLogger())
+	}
+	systemService := systemsvc.NewService(cfg, clock.RealClock{})
+	return apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
+		System: systemhandler.NewHandler(systemService),
+	})
 }
 
 func testLogger() *slog.Logger {

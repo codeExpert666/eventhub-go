@@ -8,6 +8,11 @@ import (
 
 type txContextKey struct{}
 
+// TxRunner 表示 service 层需要的事务运行能力。
+type TxRunner interface {
+	WithinTx(ctx context.Context, fn func(context.Context) error) error
+}
+
 // Transactor 由 service 层用于显式控制数据库事务边界。
 type Transactor struct {
 	db      *sql.DB

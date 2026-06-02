@@ -3,23 +3,28 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
-	"eventhub-go/internal/apperror"
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
+	authhandler "eventhub-go/internal/http/handler/auth"
+	systemhandler "eventhub-go/internal/http/handler/system"
+	userhandler "eventhub-go/internal/http/handler/user"
 	"eventhub-go/internal/http/middleware"
+	"eventhub-go/internal/platform/clock"
 	"eventhub-go/internal/repository"
-	"eventhub-go/internal/security"
 	"eventhub-go/internal/security/jwt"
+	"eventhub-go/internal/security/password"
+	"eventhub-go/internal/security/refresh"
 	authsvc "eventhub-go/internal/service/auth"
+	systemsvc "eventhub-go/internal/service/system"
 	usersvc "eventhub-go/internal/service/user"
 )
 
@@ -128,10 +133,10 @@ func TestMeEndpointReturnsCurrentUser(t *testing.T) {
 }
 
 func TestMeEndpointRejectsDisabledUserOldToken(t *testing.T) {
-	router, auth := testAuthRouter(t)
+	router, store := testAuthRouter(t)
 	registerViaHTTP(t, router, "alice", "alice@example.com")
 	token := loginAndReturnAccessToken(t, router, "alice", "Password123")
-	auth.disableUser("alice")
+	store.disableUser("alice")
 
 	recorder := performRequest(router, http.MethodGet, "/api/v1/me", nil, map[string]string{
 		"Authorization": "Bearer " + token,
@@ -140,7 +145,7 @@ func TestMeEndpointRejectsDisabledUserOldToken(t *testing.T) {
 	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
 }
 
-func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthService) {
+func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	t.Helper()
 	codec, err := jwt.NewCodec(jwt.Config{
 		Issuer:        "eventhub-backend",
@@ -150,13 +155,29 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthService) {
 	if err != nil {
 		t.Fatalf("new jwt codec: %v", err)
 	}
-	auth := newTestHTTPAuthService(codec)
-	router := apphttp.NewRouter(
-		config.Config{AppName: "eventhub-backend", Version: "test"},
-		testLogger(),
-		apphttp.WithAuth(auth, auth, middleware.NewAuth(codec, auth)),
-	)
-	return router, auth
+	store := newTestHTTPAuthStore()
+	users := &testHTTPUserRepo{store: store}
+	roles := &testHTTPRoleRepo{store: store}
+	sessions := &testHTTPSessionRepo{store: store}
+	userService := usersvc.NewService(users, roles)
+	authService := authsvc.NewService(authsvc.Dependencies{
+		Users:        users,
+		Roles:        roles,
+		Sessions:     sessions,
+		Transactor:   testHTTPNoopTransactor{},
+		Passwords:    password.NewBCryptHasherWithCost(bcrypt.MinCost),
+		Tokens:       codec,
+		RefreshToken: refresh.NewManager(30 * 24 * time.Hour),
+		UserService:  userService,
+	})
+	systemService := systemsvc.NewService(config.Config{AppName: "eventhub-backend", Version: "test"}, clock.RealClock{})
+	router := apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
+		System:         systemhandler.NewHandler(systemService),
+		Auth:           authhandler.NewHandler(authService),
+		User:           userhandler.NewHandler(userService),
+		AuthMiddleware: middleware.NewAuth(codec, userService),
+	})
+	return router, store
 }
 
 func registerViaHTTP(t *testing.T, router http.Handler, username, email string) {
@@ -212,138 +233,246 @@ func assertHTTPError(t *testing.T, recorder *httptest.ResponseRecorder, status i
 	}
 }
 
-type testHTTPAuthService struct {
-	mu       sync.Mutex
-	nextID   int64
-	codec    *jwt.Codec
-	users    map[int64]*testHTTPUser
-	username map[string]int64
-	email    map[string]int64
+type testHTTPNoopTransactor struct{}
+
+func (testHTTPNoopTransactor) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
 }
 
-type testHTTPUser struct {
-	id           int64
-	username     string
-	email        string
-	passwordHash string
-	status       repository.UserStatus
-	roles        []string
+type testHTTPAuthStore struct {
+	mu             sync.Mutex
+	nextUserID     int64
+	nextSessionID  int64
+	users          map[int64]repository.User
+	username       map[string]int64
+	email          map[string]int64
+	roles          map[int64]repository.Role
+	roleByCode     map[string]int64
+	userRoles      map[int64]map[int64]bool
+	sessions       map[string]repository.AuthSession
+	refreshHashMap map[string]string
 }
 
-func newTestHTTPAuthService(codec *jwt.Codec) *testHTTPAuthService {
-	return &testHTTPAuthService{
-		nextID:   1,
-		codec:    codec,
-		users:    map[int64]*testHTTPUser{},
-		username: map[string]int64{},
-		email:    map[string]int64{},
+func newTestHTTPAuthStore() *testHTTPAuthStore {
+	return &testHTTPAuthStore{
+		nextUserID:     1,
+		nextSessionID:  1,
+		users:          map[int64]repository.User{},
+		username:       map[string]int64{},
+		email:          map[string]int64{},
+		roles:          map[int64]repository.Role{1: {ID: 1, Code: "USER", Name: "普通用户"}},
+		roleByCode:     map[string]int64{"USER": 1},
+		userRoles:      map[int64]map[int64]bool{},
+		sessions:       map[string]repository.AuthSession{},
+		refreshHashMap: map[string]string{},
 	}
 }
 
-func (s *testHTTPAuthService) Register(ctx context.Context, command authsvc.RegisterCommand) (usersvc.UserResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	username := strings.TrimSpace(command.Username)
-	email := strings.ToLower(strings.TrimSpace(command.Email))
-	if _, ok := s.username[username]; ok {
-		return usersvc.UserResult{}, apperror.New(apperror.AuthConflict, "用户名已存在")
-	}
-	if _, ok := s.email[email]; ok {
-		return usersvc.UserResult{}, apperror.New(apperror.AuthConflict, "邮箱已存在")
-	}
-	user := &testHTTPUser{
-		id:           s.nextID,
-		username:     username,
-		email:        email,
-		passwordHash: "hash:" + command.Password,
-		status:       repository.UserStatusEnabled,
-		roles:        []string{"USER"},
-	}
-	s.nextID++
-	s.users[user.id] = user
-	s.username[user.username] = user.id
-	s.email[user.email] = user.id
-	return user.toResult(), nil
-}
-
-func (s *testHTTPAuthService) Login(ctx context.Context, command authsvc.LoginCommand) (authsvc.LoginResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	user := s.findUserLocked(command.UsernameOrEmail)
-	if user == nil || user.passwordHash != "hash:"+command.Password {
-		return authsvc.LoginResult{}, apperror.New(apperror.AuthUnauthorized, "账号或密码错误")
-	}
-	if user.status == repository.UserStatusDisabled {
-		return authsvc.LoginResult{}, apperror.New(apperror.AuthForbidden, "用户已被禁用")
-	}
-	sessionID := uuid.NewString()
-	accessToken, err := s.codec.IssueAccessToken(user.id, sessionID)
-	if err != nil {
-		return authsvc.LoginResult{}, err
-	}
-	return authsvc.LoginResult{
-		AccessToken:         accessToken,
-		RefreshToken:        strings.Repeat("a", 43),
-		AuthorizationScheme: "Bearer",
-		ExpiresIn:           int64(s.codec.AccessTokenTTL().Seconds()),
-		RefreshExpiresIn:    2592000,
-		SessionID:           sessionID,
-		User:                user.toResult(),
-	}, nil
-}
-
-func (s *testHTTPAuthService) CurrentUser(ctx context.Context, query usersvc.CurrentUserQuery) (usersvc.UserResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	user := s.users[query.Principal.UserID]
-	if user == nil || user.status != repository.UserStatusEnabled {
-		return usersvc.UserResult{}, apperror.New(apperror.AuthUnauthorized, "请先登录或重新登录")
-	}
-	return user.toResult(), nil
-}
-
-func (s *testHTTPAuthService) LoadPrincipal(ctx context.Context, userID int64) (security.Principal, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	user := s.users[userID]
-	if user == nil || user.status != repository.UserStatusEnabled {
-		return security.Principal{}, apperror.New(apperror.AuthUnauthorized, "请先登录或重新登录")
-	}
-	return security.Principal{
-		UserID:      user.id,
-		Username:    user.username,
-		Authorities: []string{"ROLE_USER"},
-	}, nil
-}
-
-func (s *testHTTPAuthService) disableUser(username string) {
+func (s *testHTTPAuthStore) disableUser(username string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id, ok := s.username[username]; ok {
-		s.users[id].status = repository.UserStatusDisabled
+		user := s.users[id]
+		user.Status = repository.UserStatusDisabled
+		user.UpdatedAt = time.Now().UTC()
+		s.users[id] = user
 	}
 }
 
-func (s *testHTTPAuthService) findUserLocked(usernameOrEmail string) *testHTTPUser {
-	identifier := strings.TrimSpace(usernameOrEmail)
-	if strings.Contains(identifier, "@") {
-		identifier = strings.ToLower(identifier)
-	}
-	if id, ok := s.username[identifier]; ok {
-		return s.users[id]
-	}
-	if id, ok := s.email[identifier]; ok {
-		return s.users[id]
-	}
-	return nil
+type testHTTPUserRepo struct {
+	store *testHTTPAuthStore
 }
 
-func (u *testHTTPUser) toResult() usersvc.UserResult {
-	return usersvc.UserResult{
-		ID:       u.id,
-		Username: u.username,
-		Email:    u.email,
-		Status:   string(u.status),
-		Roles:    append([]string(nil), u.roles...),
+func (r *testHTTPUserRepo) ExistsByUsername(ctx context.Context, username string) (bool, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	_, ok := r.store.username[username]
+	return ok, nil
+}
+
+func (r *testHTTPUserRepo) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	_, ok := r.store.email[email]
+	return ok, nil
+}
+
+func (r *testHTTPUserRepo) Create(ctx context.Context, input repository.CreateUserInput) (repository.User, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	if _, ok := r.store.username[input.Username]; ok {
+		return repository.User{}, errors.New("duplicate username")
 	}
+	if _, ok := r.store.email[input.Email]; ok {
+		return repository.User{}, errors.New("duplicate email")
+	}
+	now := time.Now().UTC()
+	user := repository.User{
+		ID:           r.store.nextUserID,
+		Username:     input.Username,
+		Email:        input.Email,
+		PasswordHash: input.PasswordHash,
+		Status:       input.Status,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	r.store.nextUserID++
+	r.store.users[user.ID] = user
+	r.store.username[user.Username] = user.ID
+	r.store.email[user.Email] = user.ID
+	return user, nil
+}
+
+func (r *testHTTPUserRepo) FindByUsernameOrEmail(ctx context.Context, usernameOrEmail string) (repository.User, bool, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	if id, ok := r.store.username[usernameOrEmail]; ok {
+		return r.store.users[id], true, nil
+	}
+	if id, ok := r.store.email[usernameOrEmail]; ok {
+		return r.store.users[id], true, nil
+	}
+	return repository.User{}, false, nil
+}
+
+func (r *testHTTPUserRepo) FindByID(ctx context.Context, id int64) (repository.User, bool, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	user, ok := r.store.users[id]
+	return user, ok, nil
+}
+
+func (r *testHTTPUserRepo) CountByCriteria(ctx context.Context, criteria repository.UserCriteria) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (r *testHTTPUserRepo) FindPage(ctx context.Context, criteria repository.UserCriteria, limit int32, offset int32) ([]repository.User, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *testHTTPUserRepo) UpdateStatus(ctx context.Context, id int64, status repository.UserStatus) (int64, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	user, ok := r.store.users[id]
+	if !ok {
+		return 0, nil
+	}
+	user.Status = status
+	user.UpdatedAt = time.Now().UTC()
+	r.store.users[id] = user
+	return 1, nil
+}
+
+type testHTTPRoleRepo struct {
+	store *testHTTPAuthStore
+}
+
+func (r *testHTTPRoleRepo) FindByCode(ctx context.Context, code string) (repository.Role, bool, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	id, ok := r.store.roleByCode[code]
+	if !ok {
+		return repository.Role{}, false, nil
+	}
+	return r.store.roles[id], true, nil
+}
+
+func (r *testHTTPRoleRepo) FindRoleCodesByUserID(ctx context.Context, userID int64) ([]string, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	roleIDs := r.store.userRoles[userID]
+	if len(roleIDs) == 0 {
+		return []string{}, nil
+	}
+	codes := make([]string, 0, len(roleIDs))
+	for roleID := range roleIDs {
+		codes = append(codes, r.store.roles[roleID].Code)
+	}
+	return codes, nil
+}
+
+func (r *testHTTPRoleRepo) FindRoleCodesByUserIDs(ctx context.Context, userIDs []int64) ([]repository.UserRoleCode, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *testHTTPRoleRepo) AddRoleToUser(ctx context.Context, userID, roleID int64) (int64, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	if _, ok := r.store.users[userID]; !ok {
+		return 0, nil
+	}
+	if _, ok := r.store.roles[roleID]; !ok {
+		return 0, nil
+	}
+	if r.store.userRoles[userID] == nil {
+		r.store.userRoles[userID] = map[int64]bool{}
+	}
+	r.store.userRoles[userID][roleID] = true
+	return 1, nil
+}
+
+type testHTTPSessionRepo struct {
+	store *testHTTPAuthStore
+}
+
+func (r *testHTTPSessionRepo) Create(ctx context.Context, input repository.CreateAuthSessionInput) (repository.AuthSession, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	if _, ok := r.store.sessions[input.SessionID]; ok {
+		return repository.AuthSession{}, errors.New("duplicate session")
+	}
+	if _, ok := r.store.refreshHashMap[input.RefreshTokenHash]; ok {
+		return repository.AuthSession{}, errors.New("duplicate refresh token hash")
+	}
+	now := time.Now().UTC()
+	session := repository.AuthSession{
+		ID:               r.store.nextSessionID,
+		SessionID:        input.SessionID,
+		UserID:           input.UserID,
+		RefreshTokenHash: input.RefreshTokenHash,
+		Status:           input.Status,
+		IssuedAt:         input.IssuedAt,
+		RefreshExpiresAt: input.RefreshExpiresAt,
+		LastSeenAt:       input.LastSeenAt,
+		Version:          input.Version,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	r.store.nextSessionID++
+	r.store.sessions[session.SessionID] = session
+	r.store.refreshHashMap[session.RefreshTokenHash] = session.SessionID
+	return session, nil
+}
+
+func (r *testHTTPSessionRepo) FindBySessionID(ctx context.Context, sessionID string) (repository.AuthSession, bool, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	session, ok := r.store.sessions[sessionID]
+	return session, ok, nil
+}
+
+func (r *testHTTPSessionRepo) FindByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (repository.AuthSession, bool, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	sessionID, ok := r.store.refreshHashMap[refreshTokenHash]
+	if !ok {
+		return repository.AuthSession{}, false, nil
+	}
+	return r.store.sessions[sessionID], true, nil
+}
+
+func (r *testHTTPSessionRepo) RotateRefreshToken(ctx context.Context, input repository.RotateRefreshTokenInput) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (r *testHTTPSessionRepo) UpdateLastSeenAt(ctx context.Context, sessionID string, lastSeenAt time.Time) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (r *testHTTPSessionRepo) RevokeBySessionID(ctx context.Context, input repository.RevokeAuthSessionInput) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (r *testHTTPSessionRepo) UpdateStatus(ctx context.Context, sessionID string, status repository.AuthSessionStatus) (int64, error) {
+	return 0, errors.New("not implemented")
 }

@@ -13,6 +13,11 @@ func NewBCryptHasher() *BCryptHasher {
 	return &BCryptHasher{cost: bcrypt.DefaultCost}
 }
 
+// NewBCryptHasherWithCost 创建使用指定成本的 BCrypt hasher。
+func NewBCryptHasherWithCost(cost int) *BCryptHasher {
+	return &BCryptHasher{cost: cost}
+}
+
 // Hash 将明文密码转换为 BCrypt hash。
 func (h *BCryptHasher) Hash(plain string) (string, error) {
 	cost := bcrypt.DefaultCost
