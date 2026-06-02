@@ -1,0 +1,298 @@
+# Persistence Foundation 设计
+
+## 1. 背景
+- 当前 Go 版 EventHub 已完成 HTTP foundation、system API、统一响应、错误码、配置、日志和项目结构规则，但尚未具备数据库、Redis、migration、sqlc 或 repository 能力。
+- Java 版对应来源：
+  - `backend/src/main/resources/db/migration/V1__init_backend_foundation.sql`
+  - `backend/src/main/resources/db/migration/V2__stage_1_auth_jwt_rbac.sql`
+  - `backend/src/main/resources/db/migration/V3__create_auth_sessions.sql`
+  - `backend/src/main/resources/mapper/auth/UserMapper.xml`
+  - `backend/src/main/resources/mapper/auth/RoleMapper.xml`
+  - `backend/src/main/resources/mapper/auth/AuthSessionMapper.xml`
+  - `backend/src/main/java/com/eventhub/modules/auth/entity/*`
+  - `backend/src/main/java/com/eventhub/modules/auth/enums/*`
+  - `backend/src/test/java/com/eventhub/modules/auth/mapper/AuthSessionMapperTest.java`
+  - `backend/src/test/java/com/eventhub/modules/auth/service/AuthSessionConcurrencyTest.java`
+- Java 版使用 Flyway + MyBatis XML：Flyway 负责 schema 版本演进，MyBatis XML 负责显式 SQL、resultMap 和 mapper 方法契约。Go 版不逐行迁移 Spring/MyBatis 结构，而是用 golang-migrate + sqlc + `database/sql` 复现同等数据库语义。
+- 业务上下文是后续 auth 注册、登录、refresh token、RBAC 和管理员用户列表的持久化底座。本次只建立底座，不实现 auth handler 或 HTTP 契约。
+
+## 2. 目标
+- 新增 Go 版 MySQL migration，覆盖 Java 版当前五张表：
+  - `system_bootstrap_record`
+  - `users`
+  - `roles`
+  - `user_roles`
+  - `auth_sessions`
+- 尽量保持字段名、字段类型、默认值、唯一约束、外键、索引和枚举字符串与 Java 版一致。
+- 使用 golang-migrate 管理 migration，替代 Java Flyway 的迁移执行语义。
+- 使用 sqlc + `database/sql` 生成类型安全查询代码，替代 Java MyBatis XML 的 SQL 映射语义。
+- 新增 `internal/platform/db` 和 `internal/platform/redis`，提供连接配置、连接生命周期和基础 ping 能力。
+- `internal/platform/db.OpenMySQL` 统一解析 MySQL DSN 并强制 `parseTime=true`，避免 sqlc 生成代码把 `TIMESTAMP` 扫描到 `time.Time` 时依赖调用方手动配置。
+- 新增 `internal/platform/db/tx.go`，让事务边界可由 service 显式控制。
+- 新增 `internal/repository` interface 和 `internal/repository/mysql` 实现，提供 user、role、auth session 后续 auth 所需的最小 CRUD / 条件更新方法。
+- 为 MySQL unique constraint 捕获提供统一能力，供后续注册冲突映射为 `AUTH-409`。
+- 使用 Testcontainers MySQL 建立 migration up/down、sqlc query 和 repository 集成测试策略。
+- 新增 `make sqlc`，并确保 `sqlc generate` 可运行。
+- 成功标准：
+  - `migrations` 能从空 MySQL up 到最新版本并 down 回空库。
+  - sqlc 生成代码位于 `internal/repository/mysql/sqlc`。
+  - repository 测试能在 Testcontainers MySQL 上验证 seed 角色、唯一约束、用户 CRUD、角色绑定、auth session 插入/查询/吊销/轮换条件更新。
+  - `go test ./...` 可通过。
+
+## 3. 非目标
+- 不实现 auth handler、auth DTO、auth service、JWT、密码哈希、refresh token 生成或登录注册 API。
+- 不把 Redis 纳入认证强一致链路；Redis 只先提供连接底座，认证会话权威状态仍在 MySQL。
+- 不实现管理员用户分页 API，只预留 Java Mapper 对应的用户查询 repository 能力。
+- 不引入 GORM 或 ORM 式 domain model 直接持久化。
+- 不迁移 Java 的 H2 test profile；Go 端用真实 MySQL 容器验证迁移和约束。
+- 不创建空 `domain`、`security`、`http/handler/auth`、`http/dto/auth` 或 `service/auth` package。
+- 不修改现有 system API、统一响应契约或 OpenAPI。
+
+## 4. 影响范围
+- 本次涉及 Go package / 模块：
+  - `internal/platform/db`
+  - `internal/platform/redis`
+  - `internal/repository`
+  - `internal/repository/mysql`
+  - `internal/repository/mysql/queries`
+  - `internal/repository/mysql/sqlc`
+  - `migrations`
+  - `sqlc.yaml`
+  - `Makefile`
+  - `go.mod` / `go.sum`
+  - `docs/ai/design`
+  - `docs/ai/implementation`
+  - `docs/ai/adr`
+  - `docs/ai/parity`
+- 本次明确不触及：
+  - `cmd`
+  - `internal/app`
+  - `internal/config`
+  - `internal/http/router`
+  - `internal/http/middleware`
+  - `internal/http/handler`
+  - `internal/http/dto`
+  - `internal/http/response`
+  - `internal/http/validation`
+  - `internal/page`
+  - `internal/service`
+  - `internal/domain`
+  - `internal/security`
+  - `api/openapi`
+  - `configs`
+- HTTP handler / DTO 模块包检查：
+  - 本次不新增具体业务 HTTP handler。
+  - 本次不新增 HTTP request / response DTO。
+  - 不创建 `internal/http/handler/auth` 或 `internal/http/dto/auth` 空包。
+- HTTP DTO / VO 边界检查：
+  - 本次无 DTO、VO 或 HTTP response data 变更。
+  - sqlc generated model 不会暴露给 handler 或 DTO。
+- Service contract 边界检查：
+  - 本次不新增 service Command / Query / Result。
+  - 事务工具放在 `platform/db`，业务事务何时开启由未来 service 方法决定。
+- 本次影响 `docs/ai/parity/java-go-parity-matrix.md`，因为数据库 schema、migration 工具、sqlc query、repository 行为、Redis 边界和测试策略都发生变化。
+
+## 5. 领域建模
+- `SystemBootstrapRecord`：
+  - 对应 Java `system_bootstrap_record`，记录基础工程 migration 已初始化。
+  - 属于系统元数据，不承载正式业务域数据。
+- `User`：
+  - 对应 Java `UserEntity` 和 `users` 表。
+  - 字段包含 `id`、`username`、`email`、`password_hash`、`status`、`created_at`、`updated_at`。
+  - `status` 必须使用 Java `UserStatus` 枚举字符串：`ENABLED`、`DISABLED`。
+- `Role`：
+  - 对应 Java `RoleEntity` 和 `roles` 表。
+  - 角色编码保持 `USER`、`ADMIN`，用于后续 RBAC。
+- `UserRole`：
+  - 对应 Java `user_roles` 关系表。
+  - 通过唯一约束保证同一用户不会重复绑定同一角色。
+- `AuthSession`：
+  - 对应 Java `AuthSessionEntity` 和 `auth_sessions` 表。
+  - 状态字符串保持 Java `AuthSessionStatus`：`ACTIVE`、`REVOKED`。
+  - refresh token 只保存 `refresh_token_hash`，不保存明文。
+  - `version` 是 refresh 轮换并发控制的乐观锁字段。
+- Go 版当前不新增 domain model package，repository interface 先使用持久化语义结构体表达数据行。后续 auth service 引入 domain/security 时，再把 repository 输出映射到 service result 或 domain model，避免 sqlc row 直接跨层泄漏。
+
+## 6. API 设计
+- 本次不新增或修改 HTTP API。
+- 后续 auth API 将复用本次 repository 能力：
+  - 注册：检查 username/email 唯一性，插入 `users`，绑定 `USER` 角色；唯一冲突映射 `AUTH-409`。
+  - 登录：按 username 或 email 查用户，检查状态，创建 `auth_sessions` ACTIVE 会话。
+  - Refresh：按 refresh token hash 查 session，并通过 session_id + old hash + old version + ACTIVE + 未过期条件更新轮换。
+  - Logout：按 session_id 将 ACTIVE 会话更新为 REVOKED。
+- 错误码 / 异常场景：
+  - MySQL duplicate entry 通过 `db.IsUniqueConstraintError` 捕获，后续 service 映射到 `apperror.AuthConflict`。
+  - 外键约束失败暂作为 repository/database 错误返回，由未来 service 决定是否映射业务错误。
+  - 查询不存在用 `sql.ErrNoRows` 或 repository 自定义的未找到语义表达，不使用 panic。
+  - 角色列表查询不存在匹配行时返回空 slice，对齐 Java/MyBatis 返回空 List 的语义，避免后续 HTTP JSON 误序列化为 `null`。
+- 与 Java OpenAPI / controller 契约差异：
+  - 本次无 API 契约变更。
+  - Java auth controller 已存在，Go auth handler 后续单独设计迁移。
+
+## 7. 数据设计
+- Migration 计划：
+  - `000001_system_bootstrap.up.sql/down.sql` 对齐 Java V1。
+  - `000002_auth_schema.up.sql/down.sql` 合并 Java V2 和 V3，创建 auth 基础表、seed `USER` / `ADMIN`、插入本地 demo admin，并创建 `auth_sessions`。
+  - 合并 V2/V3 的原因：Go 版当前是从空库起步，没有生产历史版本需要逐号兼容；同时把 auth schema 作为一个底座阶段更利于 up/down 测试。Java 来源和合并差异会记录到 parity matrix。
+- 表结构：
+  - `system_bootstrap_record`
+    - `id BIGINT AUTO_INCREMENT PRIMARY KEY`
+    - `environment VARCHAR(32) NOT NULL`
+    - `note VARCHAR(128) NOT NULL`
+    - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+    - `idx_system_bootstrap_record_environment (environment)`
+    - seed：`('shared', 'backend foundation initialized')`
+  - `users`
+    - `id BIGINT AUTO_INCREMENT PRIMARY KEY`
+    - `username VARCHAR(32) NOT NULL`
+    - `email VARCHAR(128) NOT NULL`
+    - `password_hash VARCHAR(100) NOT NULL`
+    - `status VARCHAR(16) NOT NULL`
+    - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+    - `updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+    - `uk_users_username UNIQUE (username)`
+    - `uk_users_email UNIQUE (email)`
+  - `roles`
+    - `id BIGINT AUTO_INCREMENT PRIMARY KEY`
+    - `code VARCHAR(32) NOT NULL`
+    - `name VARCHAR(64) NOT NULL`
+    - `description VARCHAR(255)`
+    - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+    - `uk_roles_code UNIQUE (code)`
+    - seed：`USER`、`ADMIN`
+  - `user_roles`
+    - `id BIGINT AUTO_INCREMENT PRIMARY KEY`
+    - `user_id BIGINT NOT NULL`
+    - `role_id BIGINT NOT NULL`
+    - `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
+    - `uk_user_roles_user_role UNIQUE (user_id, role_id)`
+    - `fk_user_roles_user FOREIGN KEY (user_id) REFERENCES users (id)`
+    - `fk_user_roles_role FOREIGN KEY (role_id) REFERENCES roles (id)`
+    - `idx_user_roles_role_id (role_id)`
+  - `auth_sessions`
+    - 字段、唯一约束、外键和索引与 Java V3 保持一致。
+    - `uk_auth_sessions_session_id UNIQUE (session_id)`
+    - `uk_auth_sessions_refresh_token_hash UNIQUE (refresh_token_hash)`
+    - `idx_auth_sessions_user_id (user_id)`
+    - `idx_auth_sessions_status (status)`
+    - `idx_auth_sessions_refresh_expires_at (refresh_expires_at)`
+- sqlc query / generated model 影响：
+  - `internal/repository/mysql/queries/users.sql` 对齐 `UserMapper.xml` 的 exists、insert、find、count、page、updateStatus。
+  - `internal/repository/mysql/queries/roles.sql` 对齐 `RoleMapper.xml` 的 findByCode、findRoleCodesByUserId、findRoleCodesByUserIds、addRoleToUser。
+  - `internal/repository/mysql/queries/auth_sessions.sql` 对齐 `AuthSessionMapper.xml` 的 insert、find、rotateRefreshToken、updateLastSeenAt、revokeBySessionId、updateStatus。
+  - 生成代码只放 `internal/repository/mysql/sqlc`，由 `repository/mysql` 包装后对外提供。
+- 数据一致性考虑：
+  - 唯一约束仍是 username/email/session_id/refresh_token_hash/role code 冲突的最终防线。
+  - refresh token 轮换依赖单条条件 UPDATE，保证并发请求最多一个成功。
+  - 事务边界不放进 repository/mysql；未来注册、登录等跨多表写入由 service 使用 `db.Transactor` 控制。
+  - MySQL 连接层强制 `parseTime=true`，使 `created_at`、`updated_at`、`issued_at` 等时间字段在所有调用方中都稳定扫描为 `time.Time`。
+
+## 8. 关键流程
+- 正常流程：
+  1. 进程或测试通过 `platform/db` 创建 `*sql.DB`；`OpenMySQL` 会先规范化 DSN 并强制启用 `parseTime`。
+  2. migration 工具对 MySQL 执行 up，建立表、索引、约束和 seed 数据。
+  3. repository/mysql 创建 sqlc `Queries`。
+  4. service 调用 repository interface；如果有多表写入，service 使用 `Transactor.WithinTx` 包住 repository 操作。
+- Java Flyway + MyBatis XML 到 Go 的对照：
+  - Flyway migration 文件 -> golang-migrate 版本化 SQL 文件。
+  - MyBatis XML SQL -> sqlc `.sql` 查询文件。
+  - MyBatis resultMap -> sqlc generated row struct + repository/mysql 显式映射。
+  - MyBatis mapper interface -> Go `internal/repository` interface。
+  - Spring `@Transactional` -> Go service 显式调用 `platform/db.Transactor`。
+- 异常流程：
+  - 连接失败：`platform/db.Open` 或 `Ping` 返回错误，调用方决定是否退出进程。
+  - migration 失败：测试或部署命令失败，不由业务代码吞掉。
+  - 唯一约束冲突：repository 返回底层错误，service 可用 `db.IsUniqueConstraintError` 映射 `AUTH-409`。
+  - 条件更新未命中：repository 返回 affected rows = 0，service 判断是并发失败、过期、已吊销还是不存在。
+- 状态流转：
+  - `users.status`：`ENABLED` <-> `DISABLED`。
+  - `auth_sessions.status`：业务吊销优先 `ACTIVE -> REVOKED`；测试辅助 `UpdateStatus` 可写 `ACTIVE` / `REVOKED`。
+- 分工：
+  - handler：本次不涉及。
+  - service：未来控制事务、业务规则、幂等和错误码映射。
+  - repository：定义持久化语义接口，不暴露 sqlc generated 类型。
+  - repository/mysql：包装 sqlc，做 row 与 repository model 的映射。
+  - sqlc/database：只承载生成查询代码。
+
+## 9. 并发 / 幂等 / 缓存
+- 超卖风险：本次不涉及库存或订单。
+- 防重复提交：
+  - username/email/session_id/refresh_token_hash/user_id+role_id 依赖唯一约束兜底。
+  - 后续 auth 注册可以先查再插入，但冲突最终以 MySQL unique constraint 为准。
+- 事务边界：
+  - 由 service 控制，而不是 repository 自动开启事务。
+  - `platform/db.Transactor` 提供 `WithinTx(ctx, fn)`，通过 context 传递当前 `*sql.Tx`，repository/mysql 从 context 取 tx 执行 sqlc 查询。
+  - 这样后续注册可以把创建用户和绑定默认角色放进同一事务；登录可以把认证校验与创建 auth session 放在 service 明确边界内。
+- Redis：
+  - 本次只新增 `internal/platform/redis` 连接底座和 ping/close 能力。
+  - Redis 暂不参与认证强一致：refresh token 有效性、logout 吊销和用户禁用后的会话判断以 MySQL `auth_sessions` / `users` 为准。
+  - 后续 Redis 可用于短 TTL 缓存、denylist 加速或限流，但必须保证 MySQL 仍是权威来源。
+
+## 10. 权限与安全
+- 本次不新增 HTTP 访问入口，因此没有角色访问控制变化。
+- 数据安全：
+  - `users.password_hash` 只保存 BCrypt 哈希。
+  - `auth_sessions.refresh_token_hash` 只保存 refresh token hash。
+  - `client_ip_hash`、`user_agent_hash` 保存哈希；`user_agent_summary` 只保存短展示摘要。
+- JWT claim 边界：
+  - 本次不实现 JWT。
+  - 后续仍遵守：JWT 只放用户 ID / `sub`、`sid`、`jti`、`typ`、`iss`、`iat`、`exp` 等稳定身份与技术 claim。
+  - 不把角色、邮箱、用户名、用户状态写入 JWT；这些动态属性通过服务端查询或受控缓存获得。
+- 审计：
+  - `auth_sessions.revoked_at` 和 `revoke_reason` 为后续 logout、管理员踢下线、用户禁用或 refresh reuse 检测留出审计字段。
+
+## 11. 测试策略
+- 单元测试：
+  - `platform/db` 测试 MySQL unique constraint error 检测，并测试 DSN 规范化会强制 `parseTime=true`。
+  - `platform/redis` 当前可用轻量配置/构造测试；真实 Redis 集成测试后续再补。
+- service / repository 测试：
+  - 本次没有 service。
+  - repository/mysql 使用 Testcontainers MySQL 执行集成测试。
+- migration / sqlc 验证：
+  - `make sqlc` 或 `sqlc generate` 生成 sqlc code。
+  - 集成测试对同一个 MySQL 容器执行 golang-migrate up/down。
+  - 验证 up 后五张表、seed `USER` / `ADMIN` 和 demo admin 可见；down 后关键表不存在。
+- 接口验证：
+  - 本次无 HTTP API 变更，不运行 OpenAPI validate。
+- 异常场景验证：
+  - username/email/session_id/refresh_token_hash 重复写入触发 MySQL 1062，并可被 `db.IsUniqueConstraintError` 捕获。
+  - 无角色用户或不存在用户的角色编码查询返回空 slice，而不是 nil slice。
+  - `RevokeBySessionID` 对非 ACTIVE 会话 affected rows = 0。
+  - `RotateRefreshToken` 并发使用相同 old hash/version 时最多一个成功。
+- Java-Go parity 验证：
+  - 对照 Java migration V1-V3。
+  - 对照 Java UserMapper、RoleMapper、AuthSessionMapper 的方法和 SQL 意图。
+  - 对照 Java `AuthSessionMapperTest` 和 `AuthSessionConcurrencyTest` 的关键断言。
+- 需要运行的命令：
+  - `gofmt`
+  - `make sqlc` 或 `sqlc generate`
+  - migration up/down 集成测试
+  - `go test ./...`
+  - `go vet ./...`
+  - `make test`
+
+## 12. 风险与替代方案
+- 当前方案的风险：
+  - Testcontainers MySQL 依赖 Docker，本机未启动 Docker 时集成测试会失败或跳过，需要在结果中明确说明。
+  - sqlc 生成代码会增加文件数量，后续 query 变更必须同步 regenerate。
+  - Go migration 将 Java V2/V3 合并为 `000002_auth_schema`，版本号不逐一对应 Java Flyway；需要 parity matrix 记录来源与差异。
+  - repository 暂未引入完整 domain model，后续 auth service 设计时需要谨慎避免 sqlc row 或持久化结构泄漏到 HTTP 层。
+  - `OpenMySQL` 现在会先用 MySQL driver 解析 DSN；不符合 `go-sql-driver/mysql` DSN 格式的配置会更早失败，这是为了换取时间字段扫描契约的确定性。
+- 备选方案：
+  - 方案 A：使用 GORM。
+  - 方案 B：使用 sqlc + pgx。
+  - 方案 C：使用 sqlc + `database/sql`。
+  - 方案 D：迁移工具继续沿用 Flyway。
+  - 方案 E：迁移工具使用 golang-migrate。
+  - 方案 F：测试继续使用 H2 或 SQLite。
+  - 方案 G：测试使用 Testcontainers MySQL。
+- 为什么不选备选方案：
+  - 不选 GORM：本项目需要对齐 Java MyBatis XML 的显式 SQL、字段、索引和查询语义；ORM 容易隐藏 SQL 细节，也容易把 persistence model 当 domain model 使用。
+  - 不选 pgx：当前目标数据库是 MySQL，`database/sql` 与 `go-sql-driver/mysql` 是更直接的标准库生态组合；后续如果扩展 PostgreSQL 再单独决策。
+  - 不选 Flyway：Flyway 是 Java 生态工具，Go 服务部署和测试中引入 JVM 迁移器会增加工具链复杂度；golang-migrate 是 Go 生态常用选择，支持 SQL 文件、MySQL driver 和测试内直接调用。
+  - 不选 H2/SQLite：本次要验证 MySQL 外键、唯一约束、时间戳默认值、`LAST_INSERT_ID()` 和条件更新行为，真实 MySQL 更可靠。
+  - 选择 sqlc + `database/sql`、golang-migrate、Testcontainers MySQL：三者都能保留显式 SQL，同时符合 Go 生态自然写法。
+- 后续可演进点：
+  - auth service 迁移时补齐 transaction-bound repository 使用场景。
+  - Redis 进入限流、短期缓存或 denylist 前，需要单独设计一致性和失效策略。
+  - 活动、库存、订单迁移时继续复用 migration/sqlc/repository/Testcontainers 底座，并针对库存扣减补并发测试。
