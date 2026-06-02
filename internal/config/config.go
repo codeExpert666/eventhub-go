@@ -8,12 +8,16 @@ package config
 import (
 	"log/slog"
 	"strconv"
+	"time"
 )
 
 const (
-	defaultAppName = "eventhub-backend"
-	defaultPort    = 8080
-	defaultVersion = "dev"
+	defaultAppName                  = "eventhub-backend"
+	defaultPort                     = 8080
+	defaultVersion                  = "dev"
+	defaultAccessTokenTTL           = 30 * time.Minute
+	defaultRefreshTokenTTL          = 30 * 24 * time.Hour
+	defaultAccessTokenSigningSecret = "eventhub-dev-access-token-secret-for-local-development"
 )
 
 // Config 聚合应用启动时需要传递给下游组件的配置。
@@ -36,6 +40,12 @@ type Config struct {
 
 	// Log 保存日志相关配置，后续可以继续扩展格式、输出位置等字段。
 	Log LogConfig
+
+	// Database 保存 MySQL 连接池配置。DSN 为空时，运行态不会装配依赖数据库的业务路由。
+	Database DatabaseConfig
+
+	// AuthToken 保存 access token 和 refresh token 的签发配置。
+	AuthToken AuthTokenConfig
 }
 
 // LogConfig 保存日志系统的启动配置。
@@ -47,18 +57,66 @@ type LogConfig struct {
 	Level slog.Level
 }
 
+// DatabaseConfig 保存 MySQL 连接配置。
+type DatabaseConfig struct {
+	// DSN 是 MySQL 连接字符串；为空时表示当前进程不装配数据库依赖。
+	DSN string
+	// MaxOpenConns 限制连接池同时打开的最大连接数，避免压垮数据库。
+	MaxOpenConns int
+	// MaxIdleConns 限制连接池保留的空闲连接数，平衡复用效率和资源占用。
+	MaxIdleConns int
+	// ConnMaxLifetime 控制单个连接的最长存活时间，用于定期回收老连接。
+	ConnMaxLifetime time.Duration
+	// ConnMaxIdleTime 控制连接在空闲状态下可保留的最长时间。
+	ConnMaxIdleTime time.Duration
+}
+
+// AuthTokenConfig 保存认证令牌配置。
+type AuthTokenConfig struct {
+	// Issuer 写入 token 的 iss claim，用于标识签发方。
+	Issuer string
+	// AccessTokenSigningSecret 是 access token 签名密钥；生产环境必须显式配置。
+	AccessTokenSigningSecret string
+	// AccessTokenTTL 控制 access token 的有效期。
+	AccessTokenTTL time.Duration
+	// RefreshTokenTTL 控制 refresh token 的有效期。
+	RefreshTokenTTL time.Duration
+}
+
 // Load 从环境变量加载配置，并对外部输入做标准化和兜底处理。
 //
 // 本函数不会因为配置缺失或格式错误直接退出进程；对于当前阶段的基础配置，
 // 更适合回退到默认值，保证本地开发和测试环境有较低启动成本。
 func Load() Config {
+	env := normalizeEnv(getEnv("EVENTHUB_ENV", EnvDev))
+
+	// 开发和测试环境允许使用内置默认密钥，降低本地启动成本；
+	// 生产环境必须显式配置签名密钥，避免误用可预测的开发密钥签发 token。
+	signingSecretFallback := defaultAccessTokenSigningSecret
+	if env == EnvProd {
+		signingSecretFallback = ""
+	}
+
 	cfg := Config{
 		AppName: getEnv("EVENTHUB_APP_NAME", defaultAppName),
-		Env:     normalizeEnv(getEnv("EVENTHUB_ENV", EnvDev)),
+		Env:     env,
 		Port:    getEnvInt("EVENTHUB_HTTP_PORT", defaultPort),
 		Version: getEnv("EVENTHUB_VERSION", defaultVersion),
 		Log: LogConfig{
 			Level: parseLogLevel(getEnv("EVENTHUB_LOG_LEVEL", "INFO")),
+		},
+		Database: DatabaseConfig{
+			DSN:             getEnv("EVENTHUB_MYSQL_DSN", ""),
+			MaxOpenConns:    getEnvInt("EVENTHUB_MYSQL_MAX_OPEN_CONNS", 10),
+			MaxIdleConns:    getEnvInt("EVENTHUB_MYSQL_MAX_IDLE_CONNS", 2),
+			ConnMaxLifetime: getEnvDuration("EVENTHUB_MYSQL_CONN_MAX_LIFETIME", 30*time.Minute),
+			ConnMaxIdleTime: getEnvDuration("EVENTHUB_MYSQL_CONN_MAX_IDLE_TIME", 5*time.Minute),
+		},
+		AuthToken: AuthTokenConfig{
+			Issuer:                   getEnv("EVENTHUB_AUTH_TOKEN_ISSUER", defaultAppName),
+			AccessTokenSigningSecret: getEnv("EVENTHUB_ACCESS_TOKEN_SIGNING_SECRET", signingSecretFallback),
+			AccessTokenTTL:           getEnvDuration("EVENTHUB_ACCESS_TOKEN_TTL", defaultAccessTokenTTL),
+			RefreshTokenTTL:          getEnvDuration("EVENTHUB_REFRESH_TOKEN_TTL", defaultRefreshTokenTTL),
 		},
 	}
 

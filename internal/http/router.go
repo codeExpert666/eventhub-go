@@ -8,12 +8,36 @@ import (
 
 	"eventhub-go/internal/apperror"
 	"eventhub-go/internal/config"
+	authhandler "eventhub-go/internal/http/handler/auth"
 	systemhandler "eventhub-go/internal/http/handler/system"
+	userhandler "eventhub-go/internal/http/handler/user"
 	"eventhub-go/internal/http/middleware"
 	"eventhub-go/internal/http/response"
 	"eventhub-go/internal/platform/clock"
 	systemsvc "eventhub-go/internal/service/system"
 )
+
+type routerOptions struct {
+	authService    authhandler.AuthService
+	userService    userhandler.UserService
+	authMiddleware func(http.Handler) http.Handler
+}
+
+// RouterOption 用于向路由装配注入可选业务能力。
+type RouterOption func(*routerOptions)
+
+// WithAuth 注册认证相关 HTTP 路由所需的 service 与 middleware。
+func WithAuth(
+	authService authhandler.AuthService,
+	userService userhandler.UserService,
+	authMiddleware func(http.Handler) http.Handler,
+) RouterOption {
+	return func(options *routerOptions) {
+		options.authService = authService
+		options.userService = userService
+		options.authMiddleware = authMiddleware
+	}
+}
 
 // NewRouter 组装应用的 HTTP 路由树，并返回可直接挂载到 http.Server 的 Handler。
 //
@@ -23,7 +47,14 @@ import (
 //  3. 统一未匹配路由和不支持方法的错误响应。
 //
 // 具体业务规则应继续放在 handler/service/repository 等更内层模块中，避免路由层直接承载业务判断。
-func NewRouter(cfg config.Config, logger *slog.Logger) http.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, optionFns ...RouterOption) http.Handler {
+	options := routerOptions{}
+	for _, option := range optionFns {
+		if option != nil {
+			option(&options)
+		}
+	}
+
 	// chi.NewRouter 创建一棵空路由树。全局中间件需要先注册，再注册具体路由，
 	// 这样后续所有端点都会经过同一套请求追踪和异常保护逻辑。
 	router := chi.NewRouter()
@@ -38,6 +69,19 @@ func NewRouter(cfg config.Config, logger *slog.Logger) http.Handler {
 	// /api/v1 前缀用于业务 API，保持版本化入口，便于后续在不破坏旧客户端的前提下演进契约。
 	router.Get("/api/v1/system/ping", systemHandler.Ping)
 	router.Post("/api/v1/system/echo", systemHandler.Echo)
+
+	if options.authService != nil {
+		authHandler := authhandler.NewHandler(options.authService)
+		router.Post("/api/v1/auth/register", authHandler.Register)
+		router.Post("/api/v1/auth/login", authHandler.Login)
+	}
+	if options.userService != nil && options.authMiddleware != nil {
+		userHandler := userhandler.NewHandler(options.userService)
+		router.Group(func(protected chi.Router) {
+			protected.Use(options.authMiddleware)
+			protected.Get("/api/v1/me", userHandler.Me)
+		})
+	}
 
 	// /actuator/* 保留 Spring Boot Actuator 风格的运维端点命名，方便和 Java 版部署、监控习惯对齐。
 	router.Get("/actuator/health", systemHandler.Health)

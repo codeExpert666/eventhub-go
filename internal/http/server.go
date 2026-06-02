@@ -23,11 +23,11 @@ type Server struct {
 //
 // 这里集中完成服务装配：监听地址来自配置，Handler 由 NewRouter 创建并负责路由和中间件，
 // 超时参数在 http.Server 字段旁说明，便于理解每个配置影响的是哪个阶段。
-func NewServer(cfg config.Config, logger *slog.Logger) *Server {
+func NewServer(cfg config.Config, logger *slog.Logger, options ...RouterOption) *Server {
 	return &Server{
 		httpServer: &http.Server{
 			Addr:    cfg.Addr(),
-			Handler: NewRouter(cfg, logger),
+			Handler: NewRouter(cfg, logger, options...),
 			// ReadHeaderTimeout 限制的是“读取请求头”的最长时间，不是整个请求的处理时间。
 			// 例如客户端已经建立 TCP 连接，但迟迟不把 HTTP 方法、路径、Header 等信息发完，
 			// 超过 5 秒后服务端就会主动结束这次连接，避免慢速连接长期占用服务资源。

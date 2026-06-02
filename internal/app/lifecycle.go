@@ -14,7 +14,15 @@ import (
 // 收到中断或终止信号时，Run 会通过 context 通知 HTTP 服务执行优雅关闭。
 // http.ErrServerClosed 表示服务已按预期关闭；只有非预期错误会被记录并返回给调用方。
 func Run() error {
-	application := Bootstrap()
+	application, err := Bootstrap()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := application.Close(); err != nil {
+			application.logger.Error("failed to close application resources", "error", err)
+		}
+	}()
 
 	// NotifyContext 基于 Background 创建可取消的进程生命周期 context。
 	// 当进程收到 Ctrl+C 或 SIGTERM 时，ctx.Done() 会关闭，HTTP server 随后进入优雅关闭流程。
