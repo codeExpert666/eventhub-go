@@ -126,8 +126,15 @@ eventhub-go/
 
   internal/
     app/
+      application.go
       bootstrap.go
       lifecycle.go
+      providers/
+        platform.go
+        system.go
+        auth.go
+        user.go
+        http.go
 
     config/
       config.go
@@ -417,13 +424,19 @@ internal/service/<domain>/
 3. service 默认依赖具体组件，不应在自身 package 内定义一堆外部能力接口，例如 `PasswordHasher`、`TokenIssuer`、`RefreshTokenManager`、`UserReader`。如果确实需要接口，接口应放在能力所属 package，例如 `security/password`、`security/jwt`、`security/refresh`，或作为稳定业务边界放在合适 package。
 4. repository interface 可以保留，因为它是 `service -> repository -> sqlc/database` 的持久化边界，避免 service 直接依赖 `repository/mysql`、sqlc generated code 或 `database/sql`。
 5. repository interface 必须表达业务持久化语义，不能只是对 sqlc 方法的一对一机械包装。
-6. router 不使用 functional options 做内部应用装配，除非确实存在公共库式 API 或大量独立可选能力。当前项目优先使用显式结构体注入，例如 `RouterDependencies`。
-7. `internal/app/bootstrap` 是 composition root，负责创建 config、logger、db、repository、service、handler 和 middleware。
-8. `internal/http/router` 只负责 URL、HTTP method、中间件和 handler 方法绑定，不创建 service，不承担业务对象装配。
-9. 构造函数可以使用 `Dependencies` struct，但字段应是具体类型或稳定边界接口，避免把 service package 变成接口集散地。
-10. 测试不要反向驱动生产代码过度抽象；优先使用真实 service + fake repository，或 handler/router 集成测试。
-11. 出现依赖边界重构时，必须按非微小修改流程更新 `docs/ai/design`、`docs/ai/implementation`，必要时更新 ADR 和 `docs/ai/parity/java-go-parity-matrix.md`。
-12. 任何依赖组织调整都必须保持 `handler -> service -> repository -> sqlc/database`，不要让 service 直接 import `repository/mysql`。
+6. router 不使用 functional options 做内部应用装配，除非确实存在公共库式 API 或大量独立可选能力。当前项目优先使用显式结构体注入，例如 `RouterDependencies`；该结构体只表达路由注册所需 handler / middleware，不负责创建对象。
+7. `internal/app` 是 composition root，负责创建 config、logger、db、repository、service、handler、middleware 和 HTTP server。
+8. `Bootstrap` 优先使用 `Bootstrap(ctx context.Context)`；涉及 DB、Redis、外部探活或其他可能阻塞的启动初始化时，不在内部隐式使用 `context.Background()`。
+9. `bootstrap.go` 只表达整体装配流程：加载配置、初始化 logger、调用 providers、创建 router/server、返回 `Application`；具体依赖创建细节拆到 `internal/app/providers`。
+10. `internal/app/providers` 可以使用 `PlatformDeps`、`SystemDeps`、`AuthDeps`、`UserDeps`、`HTTPDeps` 等聚合结构体，但这些结构体只属于 composition root 装配过程，不下沉到 service、handler、domain、repository。
+11. provider 只做依赖装配、资源创建和模块连接，不承载业务规则、HTTP 入参处理、事务决策或 repository 查询语义。
+12. `internal/http/router` 只负责 URL、HTTP method、中间件和 handler 方法绑定，不创建 service，不承担业务对象装配。
+13. service、handler、具有依赖字段的 middleware 等业务组件保持“目标结构体 + 对应 New 函数”的形式，例如 `Service` / `NewService`、`Handler` / `NewHandler`、`AuthMiddleware` / `NewAuthMiddleware`。纯函数型 middleware 可以继续使用 `NewXxx(...) func(http.Handler) http.Handler`。
+14. service、handler、domain、repository 包中不使用仅用于字段转移的 `Dependencies` / `Deps` / `Options` 结构体；构造函数优先使用显式参数。
+15. 如果构造函数参数过多，优先审视职责边界、拆分 provider 或模块能力，而不是简单包一层 `Dependencies`。
+16. 测试不要反向驱动生产代码过度抽象；优先使用真实 service + fake repository，或 handler/router 集成测试。
+17. 出现依赖边界重构时，必须按非微小修改流程更新 `docs/ai/design`、`docs/ai/implementation`，必要时更新 ADR 和 `docs/ai/parity/java-go-parity-matrix.md`。
+18. 任何依赖组织调整都必须保持 `handler -> service -> repository -> sqlc/database`，不要让 service 直接 import `repository/mysql`。
 
 ### 7.9 禁止偏离规则
 - 不要把业务逻辑写进 `cmd/eventhub/main.go`。

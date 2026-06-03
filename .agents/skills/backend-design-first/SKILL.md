@@ -40,6 +40,7 @@ Before design and implementation, check the relevant AGENTS.md rules instead of 
 - HTTP handler / DTO boundaries: AGENTS.md sections 7.5 and 7.6
 - service Command / Query / Result boundaries: AGENTS.md section 7.7
 - dependency and interface rules: AGENTS.md section 7.8
+- constructor, app provider, and bootstrap context rules: AGENTS.md sections 7.2 and 7.8
 - API, error, data, and JWT constraints: AGENTS.md section 8
 - verification expectations: AGENTS.md sections 9 and 11
 
@@ -84,7 +85,10 @@ Make the smallest change set that closes the target loop.
 Core boundaries to preserve:
 - `handler -> service -> repository -> sqlc/database`
 - concrete types by default; interfaces only for stable boundaries or capability-owner packages
-- `internal/app/bootstrap` wires objects; `internal/http/router` binds routes
+- `internal/app/bootstrap` coordinates app setup; `internal/app/providers` wires object details; `internal/http/router` binds routes
+- service, handler, and business middleware constructors prefer explicit parameters and target `NewXxx` constructors
+- app/provider aggregate structs stay inside the composition root and do not leak into service, handler, domain, or repository packages
+- bootstrapping that initializes blocking resources should accept caller-provided context
 - handlers do not access database/sql, sqlc queries, or transaction handles directly
 - service does not import `repository/mysql`, sqlc generated packages, or `database/sql`
 - business errors use explicit errors, not `panic`
