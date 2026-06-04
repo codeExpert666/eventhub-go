@@ -11,19 +11,6 @@ import (
 	usersvc "eventhub-go/internal/service/user"
 )
 
-// Dependencies 聚合 auth service 依赖。
-type Dependencies struct {
-	Users        repository.UserRepository
-	Roles        repository.RoleRepository
-	Sessions     repository.AuthSessionRepository
-	Transactor   platformdb.TxRunner
-	Passwords    *password.BCryptHasher
-	Tokens       *jwt.Codec
-	RefreshToken *refresh.Manager
-	UserService  *usersvc.Service
-	Clock        clock.Clock
-}
-
 // Service 承载认证用例。
 type Service struct {
 	users        repository.UserRepository
@@ -38,20 +25,29 @@ type Service struct {
 }
 
 // NewService 创建 auth service。
-func NewService(deps Dependencies) *Service {
-	serviceClock := deps.Clock
+func NewService(
+	users repository.UserRepository,
+	roles repository.RoleRepository,
+	sessions repository.AuthSessionRepository,
+	transactor platformdb.TxRunner,
+	passwords *password.BCryptHasher,
+	tokens *jwt.Codec,
+	refreshToken *refresh.Manager,
+	userService *usersvc.Service,
+	serviceClock clock.Clock,
+) *Service {
 	if serviceClock == nil {
 		serviceClock = clock.RealClock{}
 	}
 	return &Service{
-		users:        deps.Users,
-		roles:        deps.Roles,
-		sessions:     deps.Sessions,
-		transactor:   deps.Transactor,
-		passwords:    deps.Passwords,
-		tokens:       deps.Tokens,
-		refreshToken: deps.RefreshToken,
-		userService:  deps.UserService,
+		users:        users,
+		roles:        roles,
+		sessions:     sessions,
+		transactor:   transactor,
+		passwords:    passwords,
+		tokens:       tokens,
+		refreshToken: refreshToken,
+		userService:  userService,
 		clock:        serviceClock,
 	}
 }

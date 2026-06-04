@@ -160,16 +160,17 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	roles := &testHTTPRoleRepo{store: store}
 	sessions := &testHTTPSessionRepo{store: store}
 	userService := usersvc.NewService(users, roles)
-	authService := authsvc.NewService(authsvc.Dependencies{
-		Users:        users,
-		Roles:        roles,
-		Sessions:     sessions,
-		Transactor:   testHTTPNoopTransactor{},
-		Passwords:    password.NewBCryptHasherWithCost(bcrypt.MinCost),
-		Tokens:       codec,
-		RefreshToken: refresh.NewManager(30 * 24 * time.Hour),
-		UserService:  userService,
-	})
+	authService := authsvc.NewService(
+		users,
+		roles,
+		sessions,
+		testHTTPNoopTransactor{},
+		password.NewBCryptHasherWithCost(bcrypt.MinCost),
+		codec,
+		refresh.NewManager(30*24*time.Hour),
+		userService,
+		clock.RealClock{},
+	)
 	systemService := systemsvc.NewService(config.Config{AppName: "eventhub-backend", Version: "test"}, clock.RealClock{})
 	router := apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
 		System:         systemhandler.NewHandler(systemService),

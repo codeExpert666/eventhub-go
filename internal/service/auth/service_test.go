@@ -199,17 +199,17 @@ func newAuthServiceFixture(t *testing.T) authServiceFixture {
 	if err != nil {
 		t.Fatalf("new jwt codec: %v", err)
 	}
-	service := NewService(Dependencies{
-		Users:        users,
-		Roles:        roles,
-		Sessions:     sessions,
-		Transactor:   noopTransactor{},
-		Passwords:    password.NewBCryptHasherWithCost(bcrypt.MinCost),
-		Tokens:       codec,
-		RefreshToken: refresh.NewManager(30 * 24 * time.Hour),
-		UserService:  userService,
-		Clock:        testClock{now: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)},
-	})
+	service := NewService(
+		users,
+		roles,
+		sessions,
+		noopTransactor{},
+		password.NewBCryptHasherWithCost(bcrypt.MinCost),
+		codec,
+		refresh.NewManager(30*24*time.Hour),
+		userService,
+		testClock{now: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)},
+	)
 	return authServiceFixture{
 		store:    store,
 		users:    users,

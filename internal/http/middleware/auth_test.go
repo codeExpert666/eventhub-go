@@ -18,7 +18,7 @@ const testSigningSecret = "eventhub-test-access-token-secret-for-auth-tests"
 func TestAuthMiddlewareRejectsMissingToken(t *testing.T) {
 	codec := newTestJWTCodec(t)
 	loader := &testPrincipalLoader{}
-	handler := NewAuth(codec, loader)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := NewAuth(codec, loader).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
 
@@ -41,7 +41,7 @@ func TestAuthMiddlewareStoresPrincipalInContext(t *testing.T) {
 			Authorities: []string{"ROLE_USER"},
 		},
 	}
-	handler := NewAuth(codec, loader)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := NewAuth(codec, loader).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := security.PrincipalFromContext(r.Context())
 		if !ok {
 			t.Fatal("expected principal in context")
@@ -74,7 +74,7 @@ func TestAuthMiddlewareRejectsDisabledUserOldToken(t *testing.T) {
 	loader := &testPrincipalLoader{
 		err: apperror.New(apperror.AuthUnauthorized, "请先登录或重新登录"),
 	}
-	handler := NewAuth(codec, loader)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := NewAuth(codec, loader).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
 
@@ -92,7 +92,7 @@ func TestAuthMiddlewareRejectsExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
-	handler := NewAuth(codec, &testPrincipalLoader{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := NewAuth(codec, &testPrincipalLoader{}).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
 

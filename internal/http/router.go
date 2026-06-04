@@ -19,7 +19,7 @@ type RouterDependencies struct {
 	System         *systemhandler.Handler
 	Auth           *authhandler.Handler
 	User           *userhandler.Handler
-	AuthMiddleware func(http.Handler) http.Handler
+	AuthMiddleware *middleware.AuthMiddleware
 }
 
 // NewRouter 组装应用的 HTTP 路由树，并返回可直接挂载到 http.Server 的 Handler。
@@ -56,7 +56,7 @@ func NewRouter(logger *slog.Logger, deps RouterDependencies) http.Handler {
 	}
 	if deps.User != nil && deps.AuthMiddleware != nil {
 		router.Group(func(protected chi.Router) {
-			protected.Use(deps.AuthMiddleware)
+			protected.Use(deps.AuthMiddleware.Middleware)
 			protected.Get("/api/v1/me", deps.User.Me)
 		})
 	}
