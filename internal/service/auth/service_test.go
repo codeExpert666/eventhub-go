@@ -14,6 +14,7 @@ import (
 
 	"eventhub-go/internal/apperror"
 	"eventhub-go/internal/repository"
+	"eventhub-go/internal/security"
 	"eventhub-go/internal/security/jwt"
 	"eventhub-go/internal/security/password"
 	"eventhub-go/internal/security/refresh"
@@ -206,6 +207,179 @@ func TestLoginRejectsDisabledUser(t *testing.T) {
 	if got := fixture.store.sessionCount(); got != 0 {
 		t.Fatalf("expected no session, got %d", got)
 	}
+}
+
+func TestRefreshRotatesRefreshTokenAndRejectsReplay(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+	if _, err := fixture.service.Register(ctx, RegisterCommand{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "Password123",
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	login, err := fixture.service.Login(ctx, LoginCommand{
+		UsernameOrEmail: "alice",
+		Password:        "Password123",
+	})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	refreshed, err := fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: login.RefreshToken})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if refreshed.AccessToken == "" || refreshed.RefreshToken == "" || refreshed.SessionID != login.SessionID {
+		t.Fatalf("unexpected refresh result: %#v", refreshed)
+	}
+	if refreshed.RefreshToken == login.RefreshToken {
+		t.Fatal("expected refresh token to rotate")
+	}
+	if refreshed.AuthorizationScheme != "Bearer" || refreshed.ExpiresIn != 1800 || refreshed.RefreshExpiresIn != 2592000 {
+		t.Fatalf("unexpected refresh response metadata: %#v", refreshed)
+	}
+	rotated := fixture.store.sessionByID(login.SessionID)
+	if rotated.Version != 1 {
+		t.Fatalf("expected version to be incremented, got %d", rotated.Version)
+	}
+	oldHash, err := fixture.service.refreshToken.Hash(login.RefreshToken)
+	if err != nil {
+		t.Fatalf("hash old refresh token: %v", err)
+	}
+	if rotated.RefreshTokenHash == oldHash {
+		t.Fatal("expected old refresh token hash to be replaced")
+	}
+
+	_, err = fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: login.RefreshToken})
+	assertAppError(t, err, apperror.AuthUnauthorized, "refresh token 无效或已过期")
+
+	refreshedAgain, err := fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: refreshed.RefreshToken})
+	if err != nil {
+		t.Fatalf("refresh rotated token: %v", err)
+	}
+	if refreshedAgain.RefreshToken == "" || refreshedAgain.RefreshToken == refreshed.RefreshToken {
+		t.Fatalf("expected second rotation, got %#v", refreshedAgain)
+	}
+}
+
+func TestRefreshRejectsExpiredSession(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+	login := registerAndLogin(t, fixture)
+	fixture.store.expireSession(login.SessionID, fixture.service.clock.Now().Add(-time.Second))
+
+	_, err := fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: login.RefreshToken})
+
+	assertAppError(t, err, apperror.AuthUnauthorized, "refresh token 无效或已过期")
+}
+
+func TestRefreshRejectsRevokedSession(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+	login := registerAndLogin(t, fixture)
+	if rows, err := fixture.sessions.UpdateStatus(ctx, login.SessionID, repository.AuthSessionStatusRevoked); err != nil || rows != 1 {
+		t.Fatalf("revoke session rows=%d err=%v", rows, err)
+	}
+
+	_, err := fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: login.RefreshToken})
+
+	assertAppError(t, err, apperror.AuthUnauthorized, "refresh token 无效或已过期")
+}
+
+func TestRefreshRejectsDisabledUser(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+	login := registerAndLogin(t, fixture)
+	if rows, err := fixture.users.UpdateStatus(ctx, login.User.ID, repository.UserStatusDisabled); err != nil || rows != 1 {
+		t.Fatalf("disable user rows=%d err=%v", rows, err)
+	}
+
+	_, err := fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: login.RefreshToken})
+
+	assertAppError(t, err, apperror.AuthUnauthorized, "refresh token 无效或已过期")
+}
+
+func TestRefreshRejectsInvalidTokenFormat(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+
+	_, err := fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: "not-a-valid-refresh-token"})
+
+	assertAppError(t, err, apperror.AuthUnauthorized, "refresh token 无效或已过期")
+}
+
+func TestRefreshConcurrentSameOldTokenSucceedsAtMostOnce(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+	login := registerAndLogin(t, fixture)
+
+	const attempts = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	successes := 0
+	failures := 0
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := fixture.service.Refresh(ctx, RefreshCommand{RefreshToken: login.RefreshToken})
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				successes++
+				return
+			}
+			appErr, ok := apperror.FromError(err)
+			if !ok || appErr.Code() != apperror.AuthUnauthorized {
+				t.Errorf("unexpected refresh error: %v", err)
+				return
+			}
+			failures++
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if successes > 1 {
+		t.Fatalf("expected at most one success, got %d", successes)
+	}
+	if successes != 1 || failures != attempts-1 {
+		t.Fatalf("expected one success and %d failures, got success=%d failures=%d", attempts-1, successes, failures)
+	}
+	session := fixture.store.sessionByID(login.SessionID)
+	if session.Version != 1 {
+		t.Fatalf("expected one successful version increment, got %d", session.Version)
+	}
+}
+
+func TestLogoutIsNoopForAuthenticatedPrincipal(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+	login := registerAndLogin(t, fixture)
+	before := fixture.store.sessionByID(login.SessionID)
+
+	err := fixture.service.Logout(ctx, LogoutCommand{Principal: security.Principal{UserID: login.User.ID}})
+
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	after := fixture.store.sessionByID(login.SessionID)
+	if after.Status != before.Status || after.Version != before.Version || after.RefreshTokenHash != before.RefreshTokenHash {
+		t.Fatalf("logout should not modify session, before=%#v after=%#v", before, after)
+	}
+}
+
+func TestLogoutRejectsMissingPrincipal(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthServiceFixture(t)
+
+	err := fixture.service.Logout(ctx, LogoutCommand{})
+
+	assertAppError(t, err, apperror.AuthUnauthorized, "请先登录或重新登录")
 }
 
 type authServiceFixture struct {
@@ -478,8 +652,30 @@ func (r *authServiceSessionRepo) FindByRefreshTokenHash(ctx context.Context, ref
 	return r.store.sessions[sessionID], true, nil
 }
 
-func (r *authServiceSessionRepo) RotateRefreshToken(ctx context.Context, input repository.RotateRefreshTokenInput) (int64, error) {
-	return 0, errors.New("not implemented")
+func (r *authServiceSessionRepo) ConditionalRotate(ctx context.Context, input repository.ConditionalRotateAuthSessionInput) (int64, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	session, ok := r.store.sessions[input.SessionID]
+	if !ok {
+		return 0, nil
+	}
+	if session.RefreshTokenHash != input.OldRefreshTokenHash ||
+		session.Version != input.OldVersion ||
+		session.Status != repository.AuthSessionStatusActive ||
+		!session.RefreshExpiresAt.After(input.RefreshedAt) {
+		return 0, nil
+	}
+	delete(r.store.sessionByRefreshHash, session.RefreshTokenHash)
+	refreshedAt := input.RefreshedAt
+	session.RefreshTokenHash = input.NewRefreshTokenHash
+	session.RefreshExpiresAt = input.RefreshExpiresAt
+	session.LastRefreshedAt = &refreshedAt
+	session.LastSeenAt = &refreshedAt
+	session.Version++
+	session.UpdatedAt = time.Now().UTC()
+	r.store.sessions[session.SessionID] = session
+	r.store.sessionByRefreshHash[session.RefreshTokenHash] = session.SessionID
+	return 1, nil
 }
 
 func (r *authServiceSessionRepo) UpdateLastSeenAt(ctx context.Context, sessionID string, lastSeenAt time.Time) (int64, error) {
@@ -518,6 +714,34 @@ func (s *authServiceTestStore) sessionCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.sessions)
+}
+
+func (s *authServiceTestStore) expireSession(sessionID string, expiresAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.sessions[sessionID]
+	session.RefreshExpiresAt = expiresAt
+	s.sessions[sessionID] = session
+}
+
+func registerAndLogin(t *testing.T, fixture authServiceFixture) LoginResult {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := fixture.service.Register(ctx, RegisterCommand{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "Password123",
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	login, err := fixture.service.Login(ctx, LoginCommand{
+		UsernameOrEmail: "alice",
+		Password:        "Password123",
+	})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	return login
 }
 
 func assertAppError(t *testing.T, err error, code apperror.Code, message string) {

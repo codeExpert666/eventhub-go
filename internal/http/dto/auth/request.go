@@ -13,3 +13,8 @@ type LoginRequest struct {
 	UsernameOrEmail string `json:"usernameOrEmail"`
 	Password        string `json:"password"`
 }
+
+// RefreshTokenRequest 表示 refresh token 续期请求体。
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refreshToken"`
+}

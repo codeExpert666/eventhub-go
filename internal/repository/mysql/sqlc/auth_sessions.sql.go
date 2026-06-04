@@ -11,6 +11,45 @@ import (
 	"time"
 )
 
+const conditionalRotateAuthSessionRefreshToken = `-- name: ConditionalRotateAuthSessionRefreshToken :execresult
+UPDATE auth_sessions
+SET refresh_token_hash = ?,
+    refresh_expires_at = ?,
+    last_refreshed_at = ?,
+    last_seen_at = ?,
+    version = version + 1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE session_id = ?
+  AND refresh_token_hash = ?
+  AND version = ?
+  AND status = 'ACTIVE'
+  AND refresh_expires_at > ?
+`
+
+type ConditionalRotateAuthSessionRefreshTokenParams struct {
+	RefreshTokenHash   string
+	RefreshExpiresAt   time.Time
+	LastRefreshedAt    sql.NullTime
+	LastSeenAt         sql.NullTime
+	SessionID          string
+	RefreshTokenHash_2 string
+	Version            int32
+	RefreshExpiresAt_2 time.Time
+}
+
+func (q *Queries) ConditionalRotateAuthSessionRefreshToken(ctx context.Context, arg ConditionalRotateAuthSessionRefreshTokenParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, conditionalRotateAuthSessionRefreshToken,
+		arg.RefreshTokenHash,
+		arg.RefreshExpiresAt,
+		arg.LastRefreshedAt,
+		arg.LastSeenAt,
+		arg.SessionID,
+		arg.RefreshTokenHash_2,
+		arg.Version,
+		arg.RefreshExpiresAt_2,
+	)
+}
+
 const createAuthSession = `-- name: CreateAuthSession :execresult
 INSERT INTO auth_sessions (
     session_id,
@@ -152,45 +191,6 @@ type RevokeAuthSessionBySessionIDParams struct {
 
 func (q *Queries) RevokeAuthSessionBySessionID(ctx context.Context, arg RevokeAuthSessionBySessionIDParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, revokeAuthSessionBySessionID, arg.RevokedAt, arg.RevokeReason, arg.SessionID)
-}
-
-const rotateAuthSessionRefreshToken = `-- name: RotateAuthSessionRefreshToken :execresult
-UPDATE auth_sessions
-SET refresh_token_hash = ?,
-    refresh_expires_at = ?,
-    last_refreshed_at = ?,
-    last_seen_at = ?,
-    version = version + 1,
-    updated_at = CURRENT_TIMESTAMP
-WHERE session_id = ?
-  AND refresh_token_hash = ?
-  AND version = ?
-  AND status = 'ACTIVE'
-  AND refresh_expires_at > ?
-`
-
-type RotateAuthSessionRefreshTokenParams struct {
-	RefreshTokenHash   string
-	RefreshExpiresAt   time.Time
-	LastRefreshedAt    sql.NullTime
-	LastSeenAt         sql.NullTime
-	SessionID          string
-	RefreshTokenHash_2 string
-	Version            int32
-	RefreshExpiresAt_2 time.Time
-}
-
-func (q *Queries) RotateAuthSessionRefreshToken(ctx context.Context, arg RotateAuthSessionRefreshTokenParams) (sql.Result, error) {
-	return q.db.ExecContext(ctx, rotateAuthSessionRefreshToken,
-		arg.RefreshTokenHash,
-		arg.RefreshExpiresAt,
-		arg.LastRefreshedAt,
-		arg.LastSeenAt,
-		arg.SessionID,
-		arg.RefreshTokenHash_2,
-		arg.Version,
-		arg.RefreshExpiresAt_2,
-	)
 }
 
 const updateAuthSessionLastSeenAt = `-- name: UpdateAuthSessionLastSeenAt :execresult

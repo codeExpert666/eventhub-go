@@ -360,7 +360,7 @@ func assertAuthSessionRepositoryBehavior(
 	}
 
 	refreshedAt := issuedAt.Add(time.Hour)
-	rows, err := sessionRepo.RotateRefreshToken(ctx, repository.RotateRefreshTokenInput{
+	rows, err := sessionRepo.ConditionalRotate(ctx, repository.ConditionalRotateAuthSessionInput{
 		SessionID:           session.SessionID,
 		OldRefreshTokenHash: "hash-old-refresh-token",
 		OldVersion:          session.Version,
@@ -374,7 +374,7 @@ func assertAuthSessionRepositoryBehavior(
 	if rows != 1 {
 		t.Fatalf("expected first rotate to affect 1 row, got %d", rows)
 	}
-	rows, err = sessionRepo.RotateRefreshToken(ctx, repository.RotateRefreshTokenInput{
+	rows, err = sessionRepo.ConditionalRotate(ctx, repository.ConditionalRotateAuthSessionInput{
 		SessionID:           session.SessionID,
 		OldRefreshTokenHash: "hash-old-refresh-token",
 		OldVersion:          session.Version,

@@ -79,11 +79,11 @@ func (r *AuthSessionRepository) FindByRefreshTokenHash(
 	return mapAuthSession(row), true, nil
 }
 
-func (r *AuthSessionRepository) RotateRefreshToken(
+func (r *AuthSessionRepository) ConditionalRotate(
 	ctx context.Context,
-	input repository.RotateRefreshTokenInput,
+	input repository.ConditionalRotateAuthSessionInput,
 ) (int64, error) {
-	return rowsAffected(r.factory.queries(ctx).RotateAuthSessionRefreshToken(ctx, sqlc.RotateAuthSessionRefreshTokenParams{
+	return rowsAffected(r.factory.queries(ctx).ConditionalRotateAuthSessionRefreshToken(ctx, sqlc.ConditionalRotateAuthSessionRefreshTokenParams{
 		SessionID:          input.SessionID,
 		RefreshTokenHash:   input.NewRefreshTokenHash,
 		RefreshTokenHash_2: input.OldRefreshTokenHash,

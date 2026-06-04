@@ -53,11 +53,17 @@ func NewRouter(logger *slog.Logger, deps RouterDependencies) http.Handler {
 	if deps.Auth != nil {
 		router.Post("/api/v1/auth/register", deps.Auth.Register)
 		router.Post("/api/v1/auth/login", deps.Auth.Login)
+		router.Post("/api/v1/auth/refresh", deps.Auth.Refresh)
 	}
-	if deps.User != nil && deps.AuthMiddleware != nil {
+	if deps.AuthMiddleware != nil {
 		router.Group(func(protected chi.Router) {
 			protected.Use(deps.AuthMiddleware.Middleware)
-			protected.Get("/api/v1/me", deps.User.Me)
+			if deps.Auth != nil {
+				protected.Post("/api/v1/auth/logout", deps.Auth.Logout)
+			}
+			if deps.User != nil {
+				protected.Get("/api/v1/me", deps.User.Me)
+			}
 		})
 	}
 

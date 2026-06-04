@@ -21,3 +21,11 @@ func badCredentialsError() *apperror.AppError {
 func disabledUserError() *apperror.AppError {
 	return apperror.New(apperror.AuthForbidden, "用户已被禁用")
 }
+
+func invalidRefreshTokenError() *apperror.AppError {
+	return apperror.New(apperror.AuthUnauthorized, "refresh token 无效或已过期")
+}
+
+func missingPrincipalError() *apperror.AppError {
+	return apperror.New(apperror.AuthUnauthorized, "请先登录或重新登录")
+}

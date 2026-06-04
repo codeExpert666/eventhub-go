@@ -49,7 +49,7 @@ type CreateAuthSessionInput struct {
 	Version          int32
 }
 
-type RotateRefreshTokenInput struct {
+type ConditionalRotateAuthSessionInput struct {
 	SessionID           string
 	OldRefreshTokenHash string
 	OldVersion          int32
@@ -68,7 +68,7 @@ type AuthSessionRepository interface {
 	Create(ctx context.Context, input CreateAuthSessionInput) (AuthSession, error)
 	FindBySessionID(ctx context.Context, sessionID string) (AuthSession, bool, error)
 	FindByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (AuthSession, bool, error)
-	RotateRefreshToken(ctx context.Context, input RotateRefreshTokenInput) (int64, error)
+	ConditionalRotate(ctx context.Context, input ConditionalRotateAuthSessionInput) (int64, error)
 	UpdateLastSeenAt(ctx context.Context, sessionID string, lastSeenAt time.Time) (int64, error)
 	RevokeBySessionID(ctx context.Context, input RevokeAuthSessionInput) (int64, error)
 	UpdateStatus(ctx context.Context, sessionID string, status AuthSessionStatus) (int64, error)

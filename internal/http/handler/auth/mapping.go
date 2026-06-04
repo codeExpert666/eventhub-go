@@ -32,3 +32,15 @@ func toLoginResponse(result authsvc.LoginResult) authdto.LoginResponse {
 		User:                toUserInfoResponse(result.User),
 	}
 }
+
+func toTokenPairResponse(result authsvc.RefreshResult) authdto.TokenPairResponse {
+	return authdto.TokenPairResponse{
+		AccessToken:         result.AccessToken,
+		RefreshToken:        result.RefreshToken,
+		AuthorizationScheme: result.AuthorizationScheme,
+		ExpiresIn:           result.ExpiresIn,
+		RefreshExpiresIn:    result.RefreshExpiresIn,
+		SessionID:           result.SessionID,
+		User:                toUserInfoResponse(result.User),
+	}
+}

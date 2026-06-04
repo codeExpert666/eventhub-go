@@ -110,6 +110,104 @@ func TestAuthLoginEndpointRejectsWrongPassword(t *testing.T) {
 	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "账号或密码错误")
 }
 
+func TestAuthRefreshEndpointRotatesTokenPair(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	registerViaHTTP(t, router, "alice", "alice@example.com")
+	login := loginAndReturnTokenPair(t, router, "alice", "Password123")
+
+	recorder := performRequest(router, http.MethodPost, "/api/v1/auth/refresh", jsonBody(t, map[string]string{
+		"refreshToken": login.refreshToken,
+	}), jsonHeaders())
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if data["accessToken"] == "" || data["refreshToken"] == "" || data["sessionId"] != login.sessionID {
+		t.Fatalf("expected refreshed token pair: %#v", data)
+	}
+	if data["refreshToken"] == login.refreshToken {
+		t.Fatal("expected refresh token rotation")
+	}
+	if data["authorizationScheme"] != "Bearer" {
+		t.Fatalf("unexpected scheme: %v", data["authorizationScheme"])
+	}
+	user := data["user"].(map[string]any)
+	if user["username"] != "alice" {
+		t.Fatalf("unexpected user: %#v", user)
+	}
+}
+
+func TestAuthRefreshEndpointRejectsReplay(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	registerViaHTTP(t, router, "alice", "alice@example.com")
+	login := loginAndReturnTokenPair(t, router, "alice", "Password123")
+
+	first := performRequest(router, http.MethodPost, "/api/v1/auth/refresh", jsonBody(t, map[string]string{
+		"refreshToken": login.refreshToken,
+	}), jsonHeaders())
+	if first.Code != http.StatusOK {
+		t.Fatalf("first refresh status=%d body=%s", first.Code, first.Body.String())
+	}
+
+	replay := performRequest(router, http.MethodPost, "/api/v1/auth/refresh", jsonBody(t, map[string]string{
+		"refreshToken": login.refreshToken,
+	}), jsonHeaders())
+
+	assertHTTPError(t, replay, http.StatusUnauthorized, "AUTH-401", "refresh token 无效或已过期")
+}
+
+func TestAuthRefreshEndpointRejectsBlankRefreshToken(t *testing.T) {
+	router, _ := testAuthRouter(t)
+
+	recorder := performRequest(router, http.MethodPost, "/api/v1/auth/refresh", jsonBody(t, map[string]string{
+		"refreshToken": "",
+	}), jsonHeaders())
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeAPIResponse(t, recorder)
+	if body["code"] != "COMMON-400" || body["message"] != "请求体参数校验失败" {
+		t.Fatalf("unexpected body: %#v", body)
+	}
+	data := body["data"].(map[string]any)
+	if data["refreshToken"] != "refreshToken 不能为空" {
+		t.Fatalf("unexpected field error: %#v", data)
+	}
+}
+
+func TestAuthLogoutEndpointRequiresAuthentication(t *testing.T) {
+	router, _ := testAuthRouter(t)
+
+	recorder := performRequest(router, http.MethodPost, "/api/v1/auth/logout", nil, nil)
+
+	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
+}
+
+func TestAuthLogoutEndpointIsNoopForAuthenticatedUser(t *testing.T) {
+	router, store := testAuthRouter(t)
+	registerViaHTTP(t, router, "alice", "alice@example.com")
+	login := loginAndReturnTokenPair(t, router, "alice", "Password123")
+	before := store.sessionByID(login.sessionID)
+
+	recorder := performRequest(router, http.MethodPost, "/api/v1/auth/logout", nil, map[string]string{
+		"Authorization": "Bearer " + login.accessToken,
+	})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeAPIResponse(t, recorder)
+	if body["code"] != "COMMON-000" {
+		t.Fatalf("unexpected body: %#v", body)
+	}
+	after := store.sessionByID(login.sessionID)
+	if after.Status != before.Status || after.Version != before.Version || after.RefreshTokenHash != before.RefreshTokenHash {
+		t.Fatalf("logout should not modify session, before=%#v after=%#v", before, after)
+	}
+}
+
 func TestMeEndpointReturnsCurrentUser(t *testing.T) {
 	router, _ := testAuthRouter(t)
 	registerViaHTTP(t, router, "alice", "alice@example.com")
@@ -199,6 +297,17 @@ func registerViaHTTP(t *testing.T, router http.Handler, username, email string) 
 
 func loginAndReturnAccessToken(t *testing.T, router http.Handler, usernameOrEmail, password string) string {
 	t.Helper()
+	return loginAndReturnTokenPair(t, router, usernameOrEmail, password).accessToken
+}
+
+type testTokenPair struct {
+	accessToken  string
+	refreshToken string
+	sessionID    string
+}
+
+func loginAndReturnTokenPair(t *testing.T, router http.Handler, usernameOrEmail, password string) testTokenPair {
+	t.Helper()
 	recorder := performRequest(router, http.MethodPost, "/api/v1/auth/login", jsonBody(t, map[string]string{
 		"usernameOrEmail": usernameOrEmail,
 		"password":        password,
@@ -211,7 +320,19 @@ func loginAndReturnAccessToken(t *testing.T, router http.Handler, usernameOrEmai
 	if !ok || token == "" {
 		t.Fatalf("missing accessToken: %#v", data)
 	}
-	return token
+	refreshToken, ok := data["refreshToken"].(string)
+	if !ok || refreshToken == "" {
+		t.Fatalf("missing refreshToken: %#v", data)
+	}
+	sessionID, ok := data["sessionId"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("missing sessionId: %#v", data)
+	}
+	return testTokenPair{
+		accessToken:  token,
+		refreshToken: refreshToken,
+		sessionID:    sessionID,
+	}
 }
 
 func jsonBody(t *testing.T, value any) []byte {
@@ -282,6 +403,12 @@ func (s *testHTTPAuthStore) disableUser(username string) {
 		user.UpdatedAt = time.Now().UTC()
 		s.users[id] = user
 	}
+}
+
+func (s *testHTTPAuthStore) sessionByID(sessionID string) repository.AuthSession {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessions[sessionID]
 }
 
 type testHTTPUserRepo struct {
@@ -466,8 +593,30 @@ func (r *testHTTPSessionRepo) FindByRefreshTokenHash(ctx context.Context, refres
 	return r.store.sessions[sessionID], true, nil
 }
 
-func (r *testHTTPSessionRepo) RotateRefreshToken(ctx context.Context, input repository.RotateRefreshTokenInput) (int64, error) {
-	return 0, errors.New("not implemented")
+func (r *testHTTPSessionRepo) ConditionalRotate(ctx context.Context, input repository.ConditionalRotateAuthSessionInput) (int64, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	session, ok := r.store.sessions[input.SessionID]
+	if !ok {
+		return 0, nil
+	}
+	if session.RefreshTokenHash != input.OldRefreshTokenHash ||
+		session.Version != input.OldVersion ||
+		session.Status != repository.AuthSessionStatusActive ||
+		!session.RefreshExpiresAt.After(input.RefreshedAt) {
+		return 0, nil
+	}
+	delete(r.store.refreshHashMap, session.RefreshTokenHash)
+	refreshedAt := input.RefreshedAt
+	session.RefreshTokenHash = input.NewRefreshTokenHash
+	session.RefreshExpiresAt = input.RefreshExpiresAt
+	session.LastRefreshedAt = &refreshedAt
+	session.LastSeenAt = &refreshedAt
+	session.Version++
+	session.UpdatedAt = time.Now().UTC()
+	r.store.sessions[session.SessionID] = session
+	r.store.refreshHashMap[session.RefreshTokenHash] = session.SessionID
+	return 1, nil
 }
 
 func (r *testHTTPSessionRepo) UpdateLastSeenAt(ctx context.Context, sessionID string, lastSeenAt time.Time) (int64, error) {

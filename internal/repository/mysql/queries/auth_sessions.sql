@@ -31,7 +31,7 @@ SELECT id, session_id, user_id, refresh_token_hash, status, issued_at, refresh_e
 FROM auth_sessions
 WHERE refresh_token_hash = ?;
 
--- name: RotateAuthSessionRefreshToken :execresult
+-- name: ConditionalRotateAuthSessionRefreshToken :execresult
 UPDATE auth_sessions
 SET refresh_token_hash = ?,
     refresh_expires_at = ?,

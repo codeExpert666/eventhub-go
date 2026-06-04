@@ -69,6 +69,22 @@ func validateLoginRequest(request authdto.LoginRequest) *apperror.AppError {
 	return nil
 }
 
+func validateRefreshTokenRequest(request authdto.RefreshTokenRequest) *apperror.AppError {
+	fields := validation.FieldErrors{}
+	refreshToken := strings.TrimSpace(request.RefreshToken)
+
+	if refreshToken == "" {
+		fields["refreshToken"] = "refreshToken 不能为空"
+	} else if len(refreshToken) > 128 {
+		fields["refreshToken"] = "refreshToken 长度不能超过 128 个字符"
+	}
+
+	if len(fields) > 0 {
+		return validation.BodyValidationError(fields)
+	}
+	return nil
+}
+
 func containsLetterAndDigit(value string) bool {
 	hasLetter := false
 	hasDigit := false

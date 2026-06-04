@@ -27,7 +27,7 @@ Java 版来源：
 - `backend/src/main/resources/db/migration/V2__stage_1_auth_jwt_rbac.sql`
 - `backend/src/main/resources/db/migration/V3__create_auth_sessions.sql`
 
-最近核验日期：2026-06-02。
+最近核验日期：2026-06-05。
 
 ## 1. 统一响应
 
@@ -172,7 +172,86 @@ Authorization: Bearer <access_token>
 - 禁用用户持有未过期旧 token 也必须被拒绝。
 - 当前用户响应不得暴露 `passwordHash`。
 
-## 5. JWT access token
+## 5. Refresh 与 Logout 接口
+
+Refresh 接口：
+
+```text
+POST /api/v1/auth/refresh
+```
+
+请求字段：
+
+| 字段 | 类型 | Java 校验 | Go 对齐要求 |
+| --- | --- | --- | --- |
+| `refreshToken` | string | not blank；max 128 | HTTP 层校验非空和最大长度；service 层校验 opaque token 固定 43 长度和 URL-safe Base64 无 padding 格式 |
+
+成功响应 `data` 与登录 token pair 字段保持一致：
+
+```json
+{
+  "accessToken": "jwt-token",
+  "refreshToken": "opaque-refresh-token",
+  "authorizationScheme": "Bearer",
+  "expiresIn": 1800,
+  "refreshExpiresIn": 2592000,
+  "sessionId": "server-session-id",
+  "user": {
+    "id": 1,
+    "username": "alice",
+    "email": "alice@example.com",
+    "status": "ENABLED",
+    "roles": ["USER"]
+  }
+}
+```
+
+Refresh 错误契约：
+
+| 场景 | HTTP | code | message |
+| --- | --- | --- | --- |
+| DTO 校验失败 | 400 | `COMMON-400` | `请求体参数校验失败` |
+| refresh token 格式非法 | 401 | `AUTH-401` | `refresh token 无效或已过期` |
+| refresh token hash 查不到 | 401 | `AUTH-401` | `refresh token 无效或已过期` |
+| 旧 refresh token 重放 | 401 | `AUTH-401` | `refresh token 无效或已过期` |
+| session 已过期 | 401 | `AUTH-401` | `refresh token 无效或已过期` |
+| session 已 `REVOKED` | 401 | `AUTH-401` | `refresh token 无效或已过期` |
+| 用户不存在或已禁用 | 401 | `AUTH-401` | `refresh token 无效或已过期` |
+
+Refresh 业务语义：
+
+- refresh endpoint 匿名放行，因为 access token 可能已经过期。
+- refresh token 是 opaque token，不是 JWT。
+- refresh 身份来源只来自 `auth_sessions.refresh_token_hash` 匹配到的服务端 session。
+- DB 只保存 `sha256:<hex>`。
+- refresh 成功后旧 token 立即失效，新 token hash 替换旧 hash。
+- 条件更新必须同时匹配 sessionId、old hash、old version、`ACTIVE` 状态和未过期时间。
+- 轮换成功时 `version + 1`。
+- 同一旧 refresh token 并发提交时最多一个成功。
+- 当前不自动吊销已轮换的新会话。
+
+Logout 接口：
+
+```text
+POST /api/v1/auth/logout
+Authorization: Bearer <access_token>
+```
+
+Logout 错误契约：
+
+| 场景 | HTTP | code | message |
+| --- | --- | --- | --- |
+| 缺失 Bearer token | 401 | `AUTH-401` | `请先登录或重新登录` |
+| access token 无效或过期 | 401 | `AUTH-401` | `请先登录或重新登录` |
+
+Logout 业务语义：
+
+- 必须已认证。
+- 当前 no-op，不修改 `auth_sessions`。
+- 当前不写 access token denylist。
+- 客户端收到成功后删除本地 token。
+
+## 6. JWT access token
 
 Java `JwtClaims` / `JwtCodec` 当前要求 access token 包含：
 
@@ -195,9 +274,9 @@ JWT 禁止保存：
 - 用户状态
 - 密码哈希或任何敏感凭证
 
-## 6. refresh token
+## 7. refresh token
 
-当前阶段 Go 版只实现登录返回 refresh token；refresh endpoint 下一阶段实现。
+Go 版已实现登录返回 refresh token 和 refresh endpoint 轮换。
 
 Java 当前语义：
 
@@ -208,7 +287,7 @@ Java 当前语义：
 - 哈希算法为 SHA-256，hex 小写，前缀为后续算法升级预留。
 - 默认 refresh token TTL 为 30 天，即 `2592000` 秒。
 
-## 7. auth_sessions
+## 8. auth_sessions
 
 登录成功写入：
 
@@ -225,7 +304,7 @@ Java 当前语义：
 
 Go 版当前 migration 已对齐 Java V3 的唯一约束、索引和状态值。
 
-## 8. OpenAPI 信息
+## 9. OpenAPI 信息
 
 Java 版通过 Springdoc 从 Controller 注解和 DTO schema 自动生成 OpenAPI：
 
@@ -238,7 +317,7 @@ Java 版通过 Springdoc 从 Controller 注解和 DTO schema 自动生成 OpenAP
 
 Go 版当前尚未建立 `api/openapi/eventhub.yaml`，本次实现只沉淀 Java contract 文档；OpenAPI YAML 和 validate 流程后续单独迁移。
 
-## 9. 测试对齐点
+## 10. 测试对齐点
 
 Java `AuthIntegrationTest` 中与本次 Go 任务直接相关的断言：
 
@@ -248,6 +327,13 @@ Java `AuthIntegrationTest` 中与本次 Go 任务直接相关的断言：
 - 并发注册同一账号时结果为一个 200 和一个 409。
 - 登录成功返回 access token、refresh token、`authorizationScheme=Bearer`、`expiresIn>0`、`refreshExpiresIn=2592000`、`sessionId` 和用户摘要。
 - 登录成功后创建 `ACTIVE` auth session；DB 中 refresh token hash 不等于明文，按 hash 可查询。
+- refresh 成功返回新的 access token、refresh token、`authorizationScheme=Bearer`、`expiresIn`、`refreshExpiresIn`、`sessionId` 和用户摘要。
+- refresh 成功后旧 refresh token 不能再次使用。
+- 新 refresh token 可以继续 refresh。
+- 过期 refresh token、revoked session、禁用用户、篡改 token 均返回 401 / `AUTH-401` / `refresh token 无效或已过期`。
+- 同一旧 refresh token 并发提交时最多一个成功。
+- logout 未认证返回 401 / `AUTH-401` / `请先登录或重新登录`。
+- logout 已认证返回成功，当前不修改 DB。
 - 密码错误返回 401 / `AUTH-401` / `账号或密码错误`，且不创建 session。
 - 账号不存在返回 401 / `AUTH-401` / `账号或密码错误`，且不创建 session。
 - 用户禁用后不能登录，返回 403 / `AUTH-403` / `用户已被禁用`。
@@ -267,3 +353,6 @@ Go 版本次测试至少覆盖：
 - 禁用用户旧 token
 - JWT claim 边界
 - refresh token hash 格式
+- refresh token 轮换与重放检测
+- refresh 并发最多一个成功
+- logout no-op
