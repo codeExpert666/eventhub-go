@@ -128,6 +128,38 @@ func TestLoginCreatesActiveSessionAndReturnsTokenPair(t *testing.T) {
 	}
 }
 
+func TestNewServiceRejectsNonPositiveAccessTokenTTL(t *testing.T) {
+	store := newAuthServiceTestStore()
+	users := &authServiceUserRepo{store: store}
+	roles := &authServiceRoleRepo{store: store}
+	sessions := &authServiceSessionRepo{store: store}
+	userService := usersvc.NewService(users, roles)
+	codec, err := jwt.NewCodec(
+		"eventhub-backend",
+		"eventhub-test-access-token-secret-for-service-tests",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("new jwt codec: %v", err)
+	}
+
+	_, err = NewService(
+		users,
+		roles,
+		sessions,
+		noopTransactor{},
+		password.NewBCryptHasherWithCost(bcrypt.MinCost),
+		codec,
+		0,
+		refresh.NewManager(30*24*time.Hour),
+		userService,
+		testClock{now: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)},
+	)
+	if err == nil || !strings.Contains(err.Error(), "access token ttl") {
+		t.Fatalf("expected access token ttl error, got %v", err)
+	}
+}
+
 func TestLoginRejectsWrongPasswordWithoutCreatingSession(t *testing.T) {
 	ctx := context.Background()
 	fixture := newAuthServiceFixture(t)
@@ -191,25 +223,29 @@ func newAuthServiceFixture(t *testing.T) authServiceFixture {
 	roles := &authServiceRoleRepo{store: store}
 	sessions := &authServiceSessionRepo{store: store}
 	userService := usersvc.NewService(users, roles)
-	codec, err := jwt.NewCodec(jwt.Config{
-		Issuer:        "eventhub-backend",
-		SigningSecret: "eventhub-test-access-token-secret-for-service-tests",
-		AccessTTL:     30 * time.Minute,
-	})
+	codec, err := jwt.NewCodec(
+		"eventhub-backend",
+		"eventhub-test-access-token-secret-for-service-tests",
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("new jwt codec: %v", err)
 	}
-	service := NewService(
+	service, err := NewService(
 		users,
 		roles,
 		sessions,
 		noopTransactor{},
 		password.NewBCryptHasherWithCost(bcrypt.MinCost),
 		codec,
+		30*time.Minute,
 		refresh.NewManager(30*24*time.Hour),
 		userService,
 		testClock{now: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)},
 	)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
 	return authServiceFixture{
 		store:    store,
 		users:    users,

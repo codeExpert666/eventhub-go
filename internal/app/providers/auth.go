@@ -32,27 +32,31 @@ func ProviderAuth(platform PlatformDeps, user UserDeps) (AuthDeps, error) {
 		return AuthDeps{}, errors.New("user dependencies are required to enable auth")
 	}
 
-	jwtCodec, err := jwt.NewCodec(jwt.Config{
-		Issuer:        platform.Config.AuthToken.Issuer,
-		SigningSecret: platform.Config.AuthToken.AccessTokenSigningSecret,
-		AccessTTL:     platform.Config.AuthToken.AccessTokenTTL,
-	})
+	jwtCodec, err := jwt.NewCodec(
+		platform.Config.AuthToken.Issuer,
+		platform.Config.AuthToken.AccessTokenSigningSecret,
+		platform.Clock,
+	)
 	if err != nil {
 		return AuthDeps{}, err
 	}
 
 	sessionRepo := repositorymysql.NewAuthSessionRepository(platform.Database)
-	authService := authsvc.NewService(
+	authService, err := authsvc.NewService(
 		user.Users,
 		user.Roles,
 		sessionRepo,
 		platformdb.NewTransactor(platform.Database, nil),
 		password.NewBCryptHasher(),
 		jwtCodec,
+		platform.Config.AuthToken.AccessTokenTTL,
 		refresh.NewManager(platform.Config.AuthToken.RefreshTokenTTL),
 		user.Service,
 		platform.Clock,
 	)
+	if err != nil {
+		return AuthDeps{}, err
+	}
 
 	return AuthDeps{
 		Service:    authService,

@@ -63,7 +63,7 @@ func (s *Service) Login(ctx context.Context, command LoginCommand) (LoginResult,
 		}); err != nil {
 			return err
 		}
-		accessToken, err := s.tokens.IssueAccessToken(foundUser.ID, sessionID)
+		accessToken, err := s.tokens.IssueAccessToken(foundUser.ID, sessionID, s.accessTTL)
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ func (s *Service) Login(ctx context.Context, command LoginCommand) (LoginResult,
 			AccessToken:         accessToken,
 			RefreshToken:        refreshToken,
 			AuthorizationScheme: authorizationSchemeBearer,
-			ExpiresIn:           int64(s.tokens.AccessTokenTTL().Seconds()),
+			ExpiresIn:           int64(s.accessTTL.Seconds()),
 			RefreshExpiresIn:    int64(refreshTTL.Seconds()),
 			SessionID:           sessionID,
 			User:                userInfo,

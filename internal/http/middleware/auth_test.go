@@ -30,7 +30,7 @@ func TestAuthMiddlewareRejectsMissingToken(t *testing.T) {
 
 func TestAuthMiddlewareStoresPrincipalInContext(t *testing.T) {
 	codec := newTestJWTCodec(t)
-	token, err := codec.IssueAccessToken(1001, "session-1001")
+	token, err := codec.IssueAccessToken(1001, "session-1001", 30*time.Minute)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestAuthMiddlewareStoresPrincipalInContext(t *testing.T) {
 
 func TestAuthMiddlewareRejectsDisabledUserOldToken(t *testing.T) {
 	codec := newTestJWTCodec(t)
-	token, err := codec.IssueAccessToken(1001, "session-1001")
+	token, err := codec.IssueAccessToken(1001, "session-1001", 30*time.Minute)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestAuthMiddlewareRejectsDisabledUserOldToken(t *testing.T) {
 
 func TestAuthMiddlewareRejectsExpiredToken(t *testing.T) {
 	codec := newTestJWTCodec(t)
-	token, err := codec.IssueAccessTokenWithTTL(1001, "session-1001", -time.Second)
+	token, err := codec.IssueAccessToken(1001, "session-1001", -time.Second)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
@@ -106,11 +106,7 @@ func TestAuthMiddlewareRejectsExpiredToken(t *testing.T) {
 
 func newTestJWTCodec(t *testing.T) *jwt.Codec {
 	t.Helper()
-	codec, err := jwt.NewCodec(jwt.Config{
-		Issuer:        "eventhub-backend",
-		SigningSecret: testSigningSecret,
-		AccessTTL:     30 * time.Minute,
-	})
+	codec, err := jwt.NewCodec("eventhub-backend", testSigningSecret, nil)
 	if err != nil {
 		t.Fatalf("new jwt codec: %v", err)
 	}

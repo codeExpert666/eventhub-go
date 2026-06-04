@@ -11,7 +11,7 @@ const testSecret = "eventhub-test-access-token-secret-for-jwt-codec"
 func TestIssueAndParseAccessTokenKeepsRequiredClaims(t *testing.T) {
 	codec := newCodecForTest(t)
 
-	token, err := codec.IssueAccessToken(1001, "session-1001")
+	token, err := codec.IssueAccessToken(1001, "session-1001", 30*time.Minute)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestParseAccessTokenRejectsWrongTypeAndMissingRequiredClaims(t *testing.T) 
 
 func TestParseAccessTokenRejectsExpiredAndTamperedToken(t *testing.T) {
 	codec := newCodecForTest(t)
-	expired, err := codec.IssueAccessTokenWithTTL(1001, "session-1001", -time.Second)
+	expired, err := codec.IssueAccessToken(1001, "session-1001", -time.Second)
 	if err != nil {
 		t.Fatalf("issue expired token: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestParseAccessTokenRejectsExpiredAndTamperedToken(t *testing.T) {
 		t.Fatal("expected expired token error")
 	}
 
-	valid, err := codec.IssueAccessToken(1001, "session-1001")
+	valid, err := codec.IssueAccessToken(1001, "session-1001", 30*time.Minute)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
@@ -93,11 +93,7 @@ func TestParseAccessTokenRejectsExpiredAndTamperedToken(t *testing.T) {
 
 func newCodecForTest(t *testing.T) *Codec {
 	t.Helper()
-	codec, err := NewCodec(Config{
-		Issuer:        "eventhub-backend",
-		SigningSecret: testSecret,
-		AccessTTL:     30 * time.Minute,
-	})
+	codec, err := NewCodec("eventhub-backend", testSecret, nil)
 	if err != nil {
 		t.Fatalf("new codec: %v", err)
 	}

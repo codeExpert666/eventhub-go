@@ -15,7 +15,8 @@ type TxRunner interface {
 
 // Transactor 由 service 层用于显式控制数据库事务边界。
 type Transactor struct {
-	db      *sql.DB
+	db *sql.DB
+	// options 是创建新事务时传给 database/sql 的选项，用于指定隔离级别和只读模式；nil 表示使用数据库默认配置。
 	options *sql.TxOptions
 }
 
@@ -29,7 +30,7 @@ func (t *Transactor) WithinTx(ctx context.Context, fn func(context.Context) erro
 	if t == nil || t.db == nil {
 		return errors.New("transactor database is nil")
 	}
-	// 已有事务表示当前调用嵌套在外层事务内，提交或回滚由外层事务创建者负责。
+	// 已有事务表示当前调用嵌套在外层事务内，提交、回滚和事务选项均由外层事务创建者决定。
 	if _, ok := TxFromContext(ctx); ok {
 		return fn(ctx)
 	}

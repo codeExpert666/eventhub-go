@@ -2,6 +2,9 @@
 package auth
 
 import (
+	"errors"
+	"time"
+
 	"eventhub-go/internal/platform/clock"
 	platformdb "eventhub-go/internal/platform/db"
 	"eventhub-go/internal/repository"
@@ -19,6 +22,7 @@ type Service struct {
 	transactor   platformdb.TxRunner
 	passwords    *password.BCryptHasher
 	tokens       *jwt.Codec
+	accessTTL    time.Duration
 	refreshToken *refresh.Manager
 	userService  *usersvc.Service
 	clock        clock.Clock
@@ -32,10 +36,14 @@ func NewService(
 	transactor platformdb.TxRunner,
 	passwords *password.BCryptHasher,
 	tokens *jwt.Codec,
+	accessTokenTTL time.Duration,
 	refreshToken *refresh.Manager,
 	userService *usersvc.Service,
 	serviceClock clock.Clock,
-) *Service {
+) (*Service, error) {
+	if accessTokenTTL <= 0 {
+		return nil, errors.New("auth access token ttl must be positive")
+	}
 	if serviceClock == nil {
 		serviceClock = clock.RealClock{}
 	}
@@ -46,8 +54,9 @@ func NewService(
 		transactor:   transactor,
 		passwords:    passwords,
 		tokens:       tokens,
+		accessTTL:    accessTokenTTL,
 		refreshToken: refreshToken,
 		userService:  userService,
 		clock:        serviceClock,
-	}
+	}, nil
 }

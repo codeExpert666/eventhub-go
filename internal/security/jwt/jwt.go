@@ -31,14 +31,6 @@ var (
 	ErrInvalidToken = errors.New("invalid jwt access token")
 )
 
-// Config 保存 JWT access token 签发和解析配置。
-type Config struct {
-	Issuer        string
-	SigningSecret string
-	AccessTTL     time.Duration
-	Clock         clock.Clock
-}
-
 // Claims 表示 access token 中的最小认证声明。
 type Claims struct {
 	SubjectID int64
@@ -54,7 +46,6 @@ type Claims struct {
 type Codec struct {
 	issuer        string
 	signingSecret []byte
-	accessTTL     time.Duration
 	clock         clock.Clock
 }
 
@@ -73,36 +64,27 @@ type tokenPayload struct {
 	TokenType string `json:"typ"`
 }
 
-// NewCodec 创建 JWT codec，并在启动期校验 issuer、密钥和 TTL。
-func NewCodec(cfg Config) (*Codec, error) {
-	if strings.TrimSpace(cfg.Issuer) == "" {
+// NewCodec 创建 JWT codec，并在启动期校验 issuer 和密钥。
+func NewCodec(issuer string, signingSecret string, tokenClock clock.Clock) (*Codec, error) {
+	normalizedIssuer := strings.TrimSpace(issuer)
+	if normalizedIssuer == "" {
 		return nil, errors.New("jwt issuer is required")
 	}
-	if len([]byte(cfg.SigningSecret)) < minSecretBytes {
+	if len([]byte(signingSecret)) < minSecretBytes {
 		return nil, errors.New("jwt signing secret must be at least 32 bytes")
 	}
-	if cfg.AccessTTL <= 0 {
-		return nil, errors.New("jwt access token ttl must be positive")
-	}
-	tokenClock := cfg.Clock
 	if tokenClock == nil {
 		tokenClock = clock.RealClock{}
 	}
 	return &Codec{
-		issuer:        strings.TrimSpace(cfg.Issuer),
-		signingSecret: []byte(cfg.SigningSecret),
-		accessTTL:     cfg.AccessTTL,
+		issuer:        normalizedIssuer,
+		signingSecret: []byte(signingSecret),
 		clock:         tokenClock,
 	}, nil
 }
 
-// IssueAccessToken 为指定用户和服务端会话签发 access token。
-func (c *Codec) IssueAccessToken(subjectID int64, sessionID string) (string, error) {
-	return c.IssueAccessTokenWithTTL(subjectID, sessionID, c.accessTTL)
-}
-
-// IssueAccessTokenWithTTL 使用指定 TTL 签发 access token，主要服务测试构造过期 token。
-func (c *Codec) IssueAccessTokenWithTTL(subjectID int64, sessionID string, ttl time.Duration) (string, error) {
+// IssueAccessToken 使用指定 TTL 为用户和服务端会话签发 access token。
+func (c *Codec) IssueAccessToken(subjectID int64, sessionID string, ttl time.Duration) (string, error) {
 	if subjectID <= 0 {
 		return "", errors.New("jwt subject id must be positive")
 	}
@@ -179,14 +161,6 @@ func (c *Codec) ParseAccessToken(token string) (Claims, error) {
 		IssuedAt:  time.Unix(payload.IssuedAt, 0).UTC(),
 		ExpiresAt: expiresAt,
 	}, nil
-}
-
-// AccessTokenTTL 返回 access token 有效期。
-func (c *Codec) AccessTokenTTL() time.Duration {
-	if c == nil {
-		return 0
-	}
-	return c.accessTTL
 }
 
 func (c *Codec) sign(payload tokenPayload) (string, error) {

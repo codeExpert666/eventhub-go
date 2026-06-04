@@ -147,11 +147,11 @@ func TestMeEndpointRejectsDisabledUserOldToken(t *testing.T) {
 
 func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	t.Helper()
-	codec, err := jwt.NewCodec(jwt.Config{
-		Issuer:        "eventhub-backend",
-		SigningSecret: "eventhub-test-access-token-secret-for-auth-tests",
-		AccessTTL:     30 * time.Minute,
-	})
+	codec, err := jwt.NewCodec(
+		"eventhub-backend",
+		"eventhub-test-access-token-secret-for-auth-tests",
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("new jwt codec: %v", err)
 	}
@@ -160,17 +160,21 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	roles := &testHTTPRoleRepo{store: store}
 	sessions := &testHTTPSessionRepo{store: store}
 	userService := usersvc.NewService(users, roles)
-	authService := authsvc.NewService(
+	authService, err := authsvc.NewService(
 		users,
 		roles,
 		sessions,
 		testHTTPNoopTransactor{},
 		password.NewBCryptHasherWithCost(bcrypt.MinCost),
 		codec,
+		30*time.Minute,
 		refresh.NewManager(30*24*time.Hour),
 		userService,
 		clock.RealClock{},
 	)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
 	systemService := systemsvc.NewService(config.Config{AppName: "eventhub-backend", Version: "test"}, clock.RealClock{})
 	router := apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
 		System:         systemhandler.NewHandler(systemService),
