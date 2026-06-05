@@ -63,6 +63,11 @@ func NewRouter(logger *slog.Logger, deps RouterDependencies) http.Handler {
 			}
 			if deps.User != nil {
 				protected.Get("/api/v1/me", deps.User.Me)
+				protected.Group(func(admin chi.Router) {
+					admin.Use(middleware.RequireRole("ADMIN"))
+					admin.Get("/api/v1/admin/users", deps.User.ListUsers)
+					admin.Patch("/api/v1/admin/users/{userId}/status", deps.User.UpdateStatus)
+				})
 			}
 		})
 	}

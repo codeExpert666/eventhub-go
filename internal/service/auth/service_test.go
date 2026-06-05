@@ -134,7 +134,7 @@ func TestNewServiceRejectsNonPositiveAccessTokenTTL(t *testing.T) {
 	users := &authServiceUserRepo{store: store}
 	roles := &authServiceRoleRepo{store: store}
 	sessions := &authServiceSessionRepo{store: store}
-	userService := usersvc.NewService(users, roles)
+	userService := usersvc.NewService(users, roles, noopTransactor{})
 	codec, err := jwt.NewCodec(
 		"eventhub-backend",
 		"eventhub-test-access-token-secret-for-service-tests",
@@ -396,7 +396,7 @@ func newAuthServiceFixture(t *testing.T) authServiceFixture {
 	users := &authServiceUserRepo{store: store}
 	roles := &authServiceRoleRepo{store: store}
 	sessions := &authServiceSessionRepo{store: store}
-	userService := usersvc.NewService(users, roles)
+	userService := usersvc.NewService(users, roles, noopTransactor{})
 	codec, err := jwt.NewCodec(
 		"eventhub-backend",
 		"eventhub-test-access-token-secret-for-service-tests",
@@ -543,7 +543,7 @@ func (r *authServiceUserRepo) CountByCriteria(ctx context.Context, criteria repo
 	return 0, errors.New("not implemented")
 }
 
-func (r *authServiceUserRepo) FindPage(ctx context.Context, criteria repository.UserCriteria, limit int32, offset int32) ([]repository.User, error) {
+func (r *authServiceUserRepo) ListUsers(ctx context.Context, criteria repository.UserCriteria, limit int32, offset int32) ([]repository.User, error) {
 	return nil, errors.New("not implemented")
 }
 

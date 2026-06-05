@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	userhandler "eventhub-go/internal/http/handler/user"
+	platformdb "eventhub-go/internal/platform/db"
 	"eventhub-go/internal/repository"
 	repositorymysql "eventhub-go/internal/repository/mysql"
 	usersvc "eventhub-go/internal/service/user"
@@ -25,7 +26,7 @@ func ProviderUser(database *sql.DB) UserDeps {
 
 	userRepo := repositorymysql.NewUserRepository(database)
 	roleRepo := repositorymysql.NewRoleRepository(database)
-	service := usersvc.NewService(userRepo, roleRepo)
+	service := usersvc.NewService(userRepo, roleRepo, platformdb.NewTransactor(database, nil))
 	return UserDeps{
 		Users:   userRepo,
 		Roles:   roleRepo,

@@ -47,6 +47,6 @@ type UserRepository interface {
 	FindByUsernameOrEmail(ctx context.Context, usernameOrEmail string) (User, bool, error)
 	FindByID(ctx context.Context, id int64) (User, bool, error)
 	CountByCriteria(ctx context.Context, criteria UserCriteria) (int64, error)
-	FindPage(ctx context.Context, criteria UserCriteria, limit int32, offset int32) ([]User, error)
+	ListUsers(ctx context.Context, criteria UserCriteria, limit int32, offset int32) ([]User, error)
 	UpdateStatus(ctx context.Context, id int64, status UserStatus) (int64, error)
 }

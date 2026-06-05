@@ -6,6 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -243,6 +246,152 @@ func TestMeEndpointRejectsDisabledUserOldToken(t *testing.T) {
 	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
 }
 
+func TestAdminUsersEndpointRejectsUserRole(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	registerViaHTTP(t, router, "alice", "alice@example.com")
+	token := loginAndReturnAccessToken(t, router, "alice", "Password123")
+
+	recorder := performRequest(router, http.MethodGet, "/api/v1/admin/users", nil, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+
+	assertHTTPError(t, recorder, http.StatusForbidden, "AUTH-403", "权限不足")
+}
+
+func TestAdminUsersEndpointAllowsAdminAndSupportsPagination(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	registerViaHTTP(t, router, "pageuser", "pageuser@example.com")
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+
+	recorder := performRequest(router, http.MethodGet, "/api/v1/admin/users?page=1&size=1", nil, map[string]string{
+		"Authorization": "Bearer " + adminToken,
+	})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if data["page"] != float64(1) || data["size"] != float64(1) || data["hasNext"] != true || data["hasPrevious"] != false {
+		t.Fatalf("unexpected page metadata: %#v", data)
+	}
+	if data["total"].(float64) <= 1 || data["totalPages"].(float64) <= 1 {
+		t.Fatalf("expected multiple users in page metadata: %#v", data)
+	}
+	items := data["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %#v", items)
+	}
+	first := items[0].(map[string]any)
+	if first["username"] != "pageuser" {
+		t.Fatalf("expected latest registered user first, got %#v", first)
+	}
+	roles := first["roles"].([]any)
+	if len(roles) != 1 || roles[0] != "USER" {
+		t.Fatalf("unexpected roles: %#v", roles)
+	}
+}
+
+func TestAdminUsersEndpointRejectsOversizedPage(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+
+	recorder := performRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/admin/users?page=9223372036854775807&size=100",
+		nil,
+		map[string]string{"Authorization": "Bearer " + adminToken},
+	)
+
+	assertHTTPError(t, recorder, http.StatusBadRequest, "COMMON-400", "请求参数校验失败")
+}
+
+func TestAdminUsersEndpointFiltersByUsernameEmailAndStatus(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	registerViaHTTP(t, router, "filteruser", "filteruser@example.com")
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+
+	recorder := performRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/admin/users?username=filter&email=FILTERUSER@example.com&status=ENABLED",
+		nil,
+		map[string]string{"Authorization": "Bearer " + adminToken},
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if data["total"] != float64(1) {
+		t.Fatalf("expected one filtered user, got %#v", data)
+	}
+	items := data["items"].([]any)
+	user := items[0].(map[string]any)
+	if user["username"] != "filteruser" || user["email"] != "filteruser@example.com" || user["status"] != "ENABLED" {
+		t.Fatalf("unexpected filtered user: %#v", user)
+	}
+}
+
+func TestAdminUsersEndpointFiltersByCreatedAtAndUpdatedAtRange(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	from := time.Now().UTC().Add(-1 * time.Minute).Format("2006-01-02T15:04:05")
+	registerViaHTTP(t, router, "timeuser", "timeuser@example.com")
+	to := time.Now().UTC().Add(1 * time.Minute).Format("2006-01-02T15:04:05")
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+
+	recorder := performRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/admin/users?username=timeuser&createdAtFrom="+from+"&createdAtTo="+to+
+			"&updatedAtFrom="+from+"&updatedAtTo="+to,
+		nil,
+		map[string]string{"Authorization": "Bearer " + adminToken},
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if data["total"] != float64(1) {
+		t.Fatalf("expected one time-range filtered user, got %#v", data)
+	}
+	items := data["items"].([]any)
+	user := items[0].(map[string]any)
+	if user["username"] != "timeuser" {
+		t.Fatalf("unexpected time-range filtered user: %#v", user)
+	}
+}
+
+func TestAdminUpdateUserStatusEndpointDisablesOldAccessToken(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	userID := registerViaHTTPAndReturnUserID(t, router, "target", "target@example.com")
+	targetToken := loginAndReturnAccessToken(t, router, "target", "Password123")
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+
+	updated := performRequest(router, http.MethodPatch, "/api/v1/admin/users/"+
+		strconv.FormatInt(userID, 10)+"/status", jsonBody(t, map[string]string{
+		"status": "DISABLED",
+	}), map[string]string{
+		"Authorization": "Bearer " + adminToken,
+		"Content-Type":  "application/json",
+	})
+
+	if updated.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", updated.Code, updated.Body.String())
+	}
+	data := decodeAPIResponse(t, updated)["data"].(map[string]any)
+	if data["status"] != "DISABLED" {
+		t.Fatalf("expected disabled user response, got %#v", data)
+	}
+
+	me := performRequest(router, http.MethodGet, "/api/v1/me", nil, map[string]string{
+		"Authorization": "Bearer " + targetToken,
+	})
+
+	assertHTTPError(t, me, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
+}
+
 func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	t.Helper()
 	codec, err := jwt.NewCodec(
@@ -254,10 +403,11 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 		t.Fatalf("new jwt codec: %v", err)
 	}
 	store := newTestHTTPAuthStore()
+	store.seedUser(t, "admin", "admin@eventhub.local", "Admin123456", []string{"USER", "ADMIN"})
 	users := &testHTTPUserRepo{store: store}
 	roles := &testHTTPRoleRepo{store: store}
 	sessions := &testHTTPSessionRepo{store: store}
-	userService := usersvc.NewService(users, roles)
+	userService := usersvc.NewService(users, roles, testHTTPNoopTransactor{})
 	authService, err := authsvc.NewService(
 		users,
 		roles,
@@ -285,6 +435,11 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 
 func registerViaHTTP(t *testing.T, router http.Handler, username, email string) {
 	t.Helper()
+	_ = registerViaHTTPAndReturnUserID(t, router, username, email)
+}
+
+func registerViaHTTPAndReturnUserID(t *testing.T, router http.Handler, username, email string) int64 {
+	t.Helper()
 	recorder := performRequest(router, http.MethodPost, "/api/v1/auth/register", jsonBody(t, map[string]string{
 		"username": username,
 		"email":    email,
@@ -293,6 +448,8 @@ func registerViaHTTP(t *testing.T, router http.Handler, username, email string) 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("register status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	return int64(data["id"].(float64))
 }
 
 func loginAndReturnAccessToken(t *testing.T, router http.Handler, usernameOrEmail, password string) string {
@@ -381,17 +538,54 @@ type testHTTPAuthStore struct {
 
 func newTestHTTPAuthStore() *testHTTPAuthStore {
 	return &testHTTPAuthStore{
-		nextUserID:     1,
-		nextSessionID:  1,
-		users:          map[int64]repository.User{},
-		username:       map[string]int64{},
-		email:          map[string]int64{},
-		roles:          map[int64]repository.Role{1: {ID: 1, Code: "USER", Name: "普通用户"}},
-		roleByCode:     map[string]int64{"USER": 1},
+		nextUserID:    1,
+		nextSessionID: 1,
+		users:         map[int64]repository.User{},
+		username:      map[string]int64{},
+		email:         map[string]int64{},
+		roles: map[int64]repository.Role{
+			1: {ID: 1, Code: "USER", Name: "普通用户"},
+			2: {ID: 2, Code: "ADMIN", Name: "管理员"},
+		},
+		roleByCode:     map[string]int64{"USER": 1, "ADMIN": 2},
 		userRoles:      map[int64]map[int64]bool{},
 		sessions:       map[string]repository.AuthSession{},
 		refreshHashMap: map[string]string{},
 	}
+}
+
+func (s *testHTTPAuthStore) seedUser(t *testing.T, username, email, rawPassword string, roleCodes []string) int64 {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(rawPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash seed password: %v", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	user := repository.User{
+		ID:           s.nextUserID,
+		Username:     username,
+		Email:        email,
+		PasswordHash: string(hash),
+		Status:       repository.UserStatusEnabled,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	s.nextUserID++
+	s.users[user.ID] = user
+	s.username[user.Username] = user.ID
+	s.email[user.Email] = user.ID
+	s.userRoles[user.ID] = map[int64]bool{}
+	for _, code := range roleCodes {
+		roleID, ok := s.roleByCode[code]
+		if !ok {
+			t.Fatalf("unknown seed role: %s", code)
+		}
+		s.userRoles[user.ID][roleID] = true
+	}
+	return user.ID
 }
 
 func (s *testHTTPAuthStore) disableUser(username string) {
@@ -475,11 +669,42 @@ func (r *testHTTPUserRepo) FindByID(ctx context.Context, id int64) (repository.U
 }
 
 func (r *testHTTPUserRepo) CountByCriteria(ctx context.Context, criteria repository.UserCriteria) (int64, error) {
-	return 0, errors.New("not implemented")
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	var count int64
+	for _, user := range r.store.users {
+		if matchesUserCriteria(user, criteria) {
+			count++
+		}
+	}
+	return count, nil
 }
 
-func (r *testHTTPUserRepo) FindPage(ctx context.Context, criteria repository.UserCriteria, limit int32, offset int32) ([]repository.User, error) {
-	return nil, errors.New("not implemented")
+func (r *testHTTPUserRepo) ListUsers(ctx context.Context, criteria repository.UserCriteria, limit int32, offset int32) ([]repository.User, error) {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	users := make([]repository.User, 0, len(r.store.users))
+	for _, user := range r.store.users {
+		if matchesUserCriteria(user, criteria) {
+			users = append(users, user)
+		}
+	}
+	sort.Slice(users, func(i, j int) bool {
+		if users[i].CreatedAt.Equal(users[j].CreatedAt) {
+			return users[i].ID > users[j].ID
+		}
+		return users[i].CreatedAt.After(users[j].CreatedAt)
+	})
+	if offset >= int32(len(users)) {
+		return []repository.User{}, nil
+	}
+	end := offset + limit
+	if end > int32(len(users)) {
+		end = int32(len(users))
+	}
+	page := make([]repository.User, end-offset)
+	copy(page, users[offset:end])
+	return page, nil
 }
 
 func (r *testHTTPUserRepo) UpdateStatus(ctx context.Context, id int64, status repository.UserStatus) (int64, error) {
@@ -493,6 +718,31 @@ func (r *testHTTPUserRepo) UpdateStatus(ctx context.Context, id int64, status re
 	user.UpdatedAt = time.Now().UTC()
 	r.store.users[id] = user
 	return 1, nil
+}
+
+func matchesUserCriteria(user repository.User, criteria repository.UserCriteria) bool {
+	if criteria.Username != "" && !strings.Contains(user.Username, criteria.Username) {
+		return false
+	}
+	if criteria.Email != "" && !strings.Contains(user.Email, criteria.Email) {
+		return false
+	}
+	if criteria.Status != nil && user.Status != *criteria.Status {
+		return false
+	}
+	if criteria.CreatedAtFrom != nil && user.CreatedAt.Before(*criteria.CreatedAtFrom) {
+		return false
+	}
+	if criteria.CreatedAtTo != nil && user.CreatedAt.After(*criteria.CreatedAtTo) {
+		return false
+	}
+	if criteria.UpdatedAtFrom != nil && user.UpdatedAt.Before(*criteria.UpdatedAtFrom) {
+		return false
+	}
+	if criteria.UpdatedAtTo != nil && user.UpdatedAt.After(*criteria.UpdatedAtTo) {
+		return false
+	}
+	return true
 }
 
 type testHTTPRoleRepo struct {
@@ -520,11 +770,32 @@ func (r *testHTTPRoleRepo) FindRoleCodesByUserID(ctx context.Context, userID int
 	for roleID := range roleIDs {
 		codes = append(codes, r.store.roles[roleID].Code)
 	}
+	sort.Strings(codes)
 	return codes, nil
 }
 
 func (r *testHTTPRoleRepo) FindRoleCodesByUserIDs(ctx context.Context, userIDs []int64) ([]repository.UserRoleCode, error) {
-	return nil, errors.New("not implemented")
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	rows := make([]repository.UserRoleCode, 0)
+	for _, userID := range userIDs {
+		roleIDs := r.store.userRoles[userID]
+		if len(roleIDs) == 0 {
+			continue
+		}
+		codes := make([]string, 0, len(roleIDs))
+		for roleID := range roleIDs {
+			codes = append(codes, r.store.roles[roleID].Code)
+		}
+		sort.Strings(codes)
+		for _, code := range codes {
+			rows = append(rows, repository.UserRoleCode{
+				UserID:   userID,
+				RoleCode: code,
+			})
+		}
+	}
+	return rows, nil
 }
 
 func (r *testHTTPRoleRepo) AddRoleToUser(ctx context.Context, userID, roleID int64) (int64, error) {

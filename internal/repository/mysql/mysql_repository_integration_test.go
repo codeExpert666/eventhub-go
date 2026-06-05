@@ -285,7 +285,7 @@ func assertRepositoryBehavior(t *testing.T, ctx context.Context, database *sql.D
 	if count != 1 {
 		t.Fatalf("expected one enabled ali user, got %d", count)
 	}
-	page, err := userRepo.FindPage(ctx, repository.UserCriteria{Status: &enabled}, 10, 0)
+	page, err := userRepo.ListUsers(ctx, repository.UserCriteria{Status: &enabled}, 10, 0)
 	if err != nil {
 		t.Fatalf("find users page: %v", err)
 	}

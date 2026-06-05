@@ -35,6 +35,9 @@ func (s *Service) GetByID(ctx context.Context, userID int64) (UserResult, error)
 }
 
 func toUserResult(user repository.User, roles []string) UserResult {
+	if roles == nil {
+		roles = []string{}
+	}
 	return UserResult{
 		ID:       user.ID,
 		Username: user.Username,

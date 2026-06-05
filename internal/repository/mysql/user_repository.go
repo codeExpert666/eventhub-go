@@ -102,8 +102,8 @@ func (r *UserRepository) CountByCriteria(ctx context.Context, criteria repositor
 	})
 }
 
-// FindPage 按筛选条件分页查询用户列表，并将 sqlc 行模型映射为 repository 层模型。
-func (r *UserRepository) FindPage(
+// ListUsers 按筛选条件分页查询用户列表，并将 sqlc 行模型映射为 repository 层模型。
+func (r *UserRepository) ListUsers(
 	ctx context.Context,
 	criteria repository.UserCriteria,
 	limit int32,
