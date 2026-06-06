@@ -1,3 +1,9 @@
 .DS_Store
 .idea/
 .vscode/
+
+# codegraph
+.codegraph/
+
+# local Codex state
+.codex/
