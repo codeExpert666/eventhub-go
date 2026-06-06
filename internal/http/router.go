@@ -8,6 +8,7 @@ import (
 
 	"eventhub-go/internal/apperror"
 	authhandler "eventhub-go/internal/http/handler/auth"
+	openapihandler "eventhub-go/internal/http/handler/openapi"
 	systemhandler "eventhub-go/internal/http/handler/system"
 	userhandler "eventhub-go/internal/http/handler/user"
 	"eventhub-go/internal/http/middleware"
@@ -19,6 +20,7 @@ type RouterDependencies struct {
 	System         *systemhandler.Handler
 	Auth           *authhandler.Handler
 	User           *userhandler.Handler
+	OpenAPI        *openapihandler.OpenAPIHandler
 	AuthMiddleware *middleware.AuthMiddleware
 }
 
@@ -48,6 +50,13 @@ func NewRouter(logger *slog.Logger, deps RouterDependencies) http.Handler {
 		router.Head("/actuator/health", deps.System.HealthHead)
 		router.Get("/actuator/info", deps.System.Info)
 		router.Head("/actuator/info", deps.System.InfoHead)
+	}
+
+	if deps.OpenAPI != nil {
+		router.Get("/openapi.yaml", deps.OpenAPI.YAML)
+		router.Get("/swagger", deps.OpenAPI.RedirectSwagger)
+		router.Get("/swagger/", deps.OpenAPI.SwaggerUI)
+		router.Get("/swagger/*", deps.OpenAPI.SwaggerUI)
 	}
 
 	if deps.Auth != nil {

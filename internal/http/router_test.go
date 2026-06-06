@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	nethttp "net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
+	openapihandler "eventhub-go/internal/http/handler/openapi"
 	systemhandler "eventhub-go/internal/http/handler/system"
 	"eventhub-go/internal/http/middleware"
 	"eventhub-go/internal/platform/clock"
@@ -193,6 +195,54 @@ func TestInfoHeadEndpoint(t *testing.T) {
 	}
 }
 
+func TestOpenAPIEndpointsAreAvailableWhenEnabled(t *testing.T) {
+	router := testRouterWithOpenAPI(true)
+
+	spec := performRequest(router, nethttp.MethodGet, "/openapi.yaml", nil, nil)
+	if spec.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected openapi status: %d body=%s", spec.Code, spec.Body.String())
+	}
+	if contentType := spec.Header().Get("Content-Type"); !strings.Contains(contentType, "application/yaml") {
+		t.Fatalf("unexpected openapi content type: %s", contentType)
+	}
+	if body := spec.Body.String(); !strings.Contains(body, "openapi: 3.0.3") ||
+		!strings.Contains(body, "/api/v1/auth/register") {
+		t.Fatalf("unexpected openapi body: %s", body)
+	}
+
+	swagger := performRequest(router, nethttp.MethodGet, "/swagger/", nil, nil)
+	if swagger.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected swagger status: %d body=%s", swagger.Code, swagger.Body.String())
+	}
+	if contentType := swagger.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("unexpected swagger content type: %s", contentType)
+	}
+	if body := swagger.Body.String(); !strings.Contains(body, "SwaggerUIBundle") ||
+		!strings.Contains(body, "/openapi.yaml") {
+		t.Fatalf("unexpected swagger body: %s", body)
+	}
+}
+
+func TestOpenAPIEndpointsAreNotRegisteredWhenDisabled(t *testing.T) {
+	router := testRouterWithOpenAPI(false)
+
+	spec := performRequest(router, nethttp.MethodGet, "/openapi.yaml", nil, nil)
+	if spec.Code != nethttp.StatusNotFound {
+		t.Fatalf("unexpected openapi status: %d body=%s", spec.Code, spec.Body.String())
+	}
+	if body := decodeAPIResponse(t, spec); body["code"] != "COMMON-404" {
+		t.Fatalf("unexpected openapi body: %#v", body)
+	}
+
+	swagger := performRequest(router, nethttp.MethodGet, "/swagger/index.html", nil, nil)
+	if swagger.Code != nethttp.StatusNotFound {
+		t.Fatalf("unexpected swagger status: %d body=%s", swagger.Code, swagger.Body.String())
+	}
+	if body := decodeAPIResponse(t, swagger); body["code"] != "COMMON-404" {
+		t.Fatalf("unexpected swagger body: %#v", body)
+	}
+}
+
 func TestMissingRouteReturnsUnifiedNotFound(t *testing.T) {
 	recorder := performRequest(testRouter(), nethttp.MethodGet, "/favicon.ico", nil, nil)
 	if recorder.Code != nethttp.StatusNotFound {
@@ -287,6 +337,10 @@ func TestPanicRecoverDoesNotWriteErrorAfterCommittedResponse(t *testing.T) {
 }
 
 func testRouter() nethttp.Handler {
+	return testRouterWithOpenAPI(false)
+}
+
+func testRouterWithOpenAPI(enabled bool) nethttp.Handler {
 	cfg := config.Config{
 		AppName: "eventhub-backend",
 		Env:     config.EnvTest,
@@ -294,8 +348,13 @@ func testRouter() nethttp.Handler {
 		Log:     config.LogConfig{Level: slog.LevelError},
 	}
 	systemService := systemsvc.NewService(cfg, clock.RealClock{})
+	var openAPI *openapihandler.OpenAPIHandler
+	if enabled {
+		openAPI = openapihandler.NewOpenAPIHandler()
+	}
 	return apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
-		System: systemhandler.NewHandler(systemService),
+		System:  systemhandler.NewHandler(systemService),
+		OpenAPI: openAPI,
 	})
 }
 

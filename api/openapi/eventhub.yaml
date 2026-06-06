@@ -1,0 +1,851 @@
+openapi: 3.0.3
+info:
+  title: EventHub Backend API
+  description: 活动预约与票务平台单体后端基础工程接口文档
+  version: v1
+  contact:
+    name: EventHub
+  license:
+    name: Apache-2.0
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+tags:
+  - name: Auth
+    description: 注册登录与认证接口
+  - name: User
+    description: 当前用户接口
+  - name: Admin User
+    description: 管理员用户管理接口
+  - name: System
+    description: 系统基础接口
+  - name: Actuator
+    description: 运维探活接口
+paths:
+  /api/v1/auth/register:
+    post:
+      tags:
+        - Auth
+      operationId: register
+      summary: 用户注册
+      description: 创建普通用户并绑定 USER 角色。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: 注册成功，返回用户摘要。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseUserInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/AuthConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Auth
+      operationId: login
+      summary: 用户登录
+      description: 校验账号密码并签发 access token、refresh token 与服务端认证会话。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功，返回 token pair、会话标识与当前用户摘要。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseLogin'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Auth
+      operationId: refreshToken
+      summary: 刷新 token
+      description: 使用 refresh token 轮换新的 access token 和 refresh token。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: refresh 成功，返回新的 token pair。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Auth
+      operationId: logout
+      summary: 用户登出
+      description: 无状态 JWT 登出入口，客户端应删除本地 token。
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 登出成功，data 为 null。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseVoid'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/me:
+    get:
+      tags:
+        - User
+      operationId: getCurrentUser
+      summary: 获取当前用户
+      description: 根据 Bearer token 返回当前登录用户信息。
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 当前用户摘要。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseUserInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/admin/users:
+    get:
+      tags:
+        - Admin User
+      operationId: listAdminUsers
+      summary: 分页查询用户列表
+      description: 管理员分页查看平台用户列表，需要 Bearer token 且当前用户拥有 ADMIN 角色。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: 从 1 开始的页码。
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: size
+          in: query
+          description: 每页条数。
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: username
+          in: query
+          description: 用户名筛选，trim 后为空则忽略，按包含匹配处理。
+          required: false
+          schema:
+            type: string
+            maxLength: 32
+        - name: email
+          in: query
+          description: 邮箱筛选，trim 后为空则忽略，转小写后按包含匹配处理。
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+        - name: status
+          in: query
+          description: 用户状态筛选。
+          required: false
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+        - name: createdAtFrom
+          in: query
+          description: 创建时间起点，格式示例 2026-05-01T00:00:00。
+          required: false
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+        - name: createdAtTo
+          in: query
+          description: 创建时间终点，格式示例 2026-05-18T23:59:59。
+          required: false
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+        - name: updatedAtFrom
+          in: query
+          description: 更新时间起点，格式示例 2026-05-01T00:00:00。
+          required: false
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+        - name: updatedAtTo
+          in: query
+          description: 更新时间终点，格式示例 2026-05-18T23:59:59。
+          required: false
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+      responses:
+        '200':
+          description: 用户摘要分页结果。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseAdminUserPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/admin/users/{userId}/status:
+    patch:
+      tags:
+        - Admin User
+      operationId: updateAdminUserStatus
+      summary: 更新用户状态
+      description: 管理员启用或禁用用户，需要 Bearer token 且当前用户拥有 ADMIN 角色。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          description: 用户主键。
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserStatusRequest'
+      responses:
+        '200':
+          description: 更新后的用户摘要。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseUserInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/system/ping:
+    get:
+      tags:
+        - System
+      operationId: ping
+      summary: 系统探活
+      description: 返回服务名称、激活环境和服务端时间。
+      responses:
+        '200':
+          description: 系统探活成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponsePing'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/system/echo:
+    post:
+      tags:
+        - System
+      operationId: echo
+      summary: 回显示例
+      description: 回显请求消息和可选标签，用于验证请求体绑定、校验和统一响应封装。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EchoRequest'
+      responses:
+        '200':
+          description: 回显成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseEcho'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /actuator/health:
+    get:
+      tags:
+        - Actuator
+      operationId: health
+      summary: 健康检查
+      description: 返回兼容 Spring Boot Actuator 风格的最小健康状态。
+      responses:
+        '200':
+          description: 应用健康。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+    head:
+      tags:
+        - Actuator
+      operationId: healthHead
+      summary: 健康检查 HEAD
+      description: 返回仅包含状态码和响应头的健康检查结果。
+      responses:
+        '200':
+          description: 应用健康。
+  /actuator/info:
+    get:
+      tags:
+        - Actuator
+      operationId: info
+      summary: 应用信息
+      description: 返回应用身份信息和服务端运行时元数据。
+      responses:
+        '200':
+          description: 应用信息。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InfoResponse'
+    head:
+      tags:
+        - Actuator
+      operationId: infoHead
+      summary: 应用信息 HEAD
+      description: 返回仅包含状态码和响应头的应用信息探针结果。
+      responses:
+        '200':
+          description: 应用信息探针成功。
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: 请求参数不合法。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: 未认证或认证信息无效。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: 当前身份缺少访问目标资源所需权限。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 请求的业务资源不存在。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    AuthConflict:
+      description: 账号、身份凭据等认证相关资源发生唯一性冲突。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: 服务端未预期的内部错误。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ApiResponse:
+      type: object
+      description: 统一响应体。
+      required:
+        - code
+        - message
+        - data
+        - requestId
+        - timestamp
+      properties:
+        code:
+          type: string
+          description: 应用层响应码。成功时为 COMMON-000，失败时对应具体错误码。
+          example: COMMON-000
+        message:
+          type: string
+          description: 面向调用方的响应描述。
+          example: 成功
+        data:
+          description: 业务数据载荷。纯操作或失败时可为 null。
+          nullable: true
+        requestId:
+          type: string
+          description: 当前请求的唯一追踪标识。
+          example: req-safe_123
+        timestamp:
+          type: string
+          format: date-time
+          description: 当前响应生成时间。
+    ErrorResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            code:
+              type: string
+              example: COMMON-400
+            message:
+              type: string
+              example: 请求体参数校验失败
+            data:
+              type: object
+              nullable: true
+              additionalProperties: true
+              example:
+                username: username 不能为空
+    ApiResponseVoid:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              nullable: true
+              example: null
+    ApiResponseUserInfo:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UserInfo'
+    ApiResponseLogin:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/LoginResponse'
+    ApiResponseTokenPair:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TokenPairResponse'
+    ApiResponseAdminUserPage:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/PageResponseUserInfo'
+    ApiResponsePing:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/PingResponse'
+    ApiResponseEcho:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/EchoResponse'
+    PageResponse:
+      type: object
+      description: 通用分页响应。
+      required:
+        - items
+        - page
+        - size
+        - total
+        - totalPages
+        - hasNext
+        - hasPrevious
+      properties:
+        items:
+          type: array
+          description: 当前页数据。
+          items: {}
+        page:
+          type: integer
+          description: 从 1 开始的页码。
+          minimum: 1
+          example: 1
+        size:
+          type: integer
+          description: 每页条数。
+          minimum: 1
+          maximum: 100
+          example: 20
+        total:
+          type: integer
+          format: int64
+          description: 满足查询条件的总记录数。
+          minimum: 0
+          example: 42
+        totalPages:
+          type: integer
+          format: int64
+          description: 总页数。
+          minimum: 0
+          example: 3
+        hasNext:
+          type: boolean
+          description: 是否存在下一页。
+          example: true
+        hasPrevious:
+          type: boolean
+          description: 是否存在上一页。
+          example: false
+    PageResponseUserInfo:
+      allOf:
+        - $ref: '#/components/schemas/PageResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserInfo'
+    RegisterRequest:
+      type: object
+      description: 用户注册请求。
+      required:
+        - username
+        - email
+        - password
+      properties:
+        username:
+          type: string
+          description: 用户名。
+          minLength: 3
+          maxLength: 32
+          pattern: '^[A-Za-z0-9_]+$'
+          example: alice
+        email:
+          type: string
+          description: 邮箱。
+          format: email
+          maxLength: 128
+          example: alice@example.com
+        password:
+          type: string
+          description: 密码，至少 8 位并同时包含字母和数字。
+          minLength: 8
+          maxLength: 72
+          example: Password123
+    LoginRequest:
+      type: object
+      description: 用户登录请求。
+      required:
+        - usernameOrEmail
+        - password
+      properties:
+        usernameOrEmail:
+          type: string
+          description: 用户名或邮箱。
+          maxLength: 128
+          example: alice
+        password:
+          type: string
+          description: 密码。
+          maxLength: 72
+          example: Password123
+    RefreshTokenRequest:
+      type: object
+      description: refresh token 续期请求。
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          description: 客户端保存的 opaque refresh token。
+          maxLength: 128
+    UpdateUserStatusRequest:
+      type: object
+      description: 更新用户状态请求。
+      required:
+        - status
+      properties:
+        status:
+          $ref: '#/components/schemas/UserStatus'
+    EchoRequest:
+      type: object
+      description: 回显示例请求。
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: 本次回显的消息内容。
+          minLength: 1
+          maxLength: 64
+          example: hello eventhub
+        tag:
+          type: string
+          maxLength: 32
+          nullable: true
+          description: 本次回显附带的可选标签。
+          example: bootstrap
+    UserStatus:
+      type: string
+      description: 用户状态。
+      enum:
+        - ENABLED
+        - DISABLED
+      example: ENABLED
+    UserInfo:
+      type: object
+      description: 用户摘要。
+      required:
+        - id
+        - username
+        - email
+        - status
+        - roles
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 用户 ID。
+          example: 1
+        username:
+          type: string
+          description: 用户名。
+          example: alice
+        email:
+          type: string
+          format: email
+          description: 邮箱。
+          example: alice@example.com
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        roles:
+          type: array
+          description: 角色编码集合。
+          items:
+            type: string
+          example:
+            - USER
+    LoginResponse:
+      type: object
+      description: 登录成功响应。
+      required:
+        - accessToken
+        - refreshToken
+        - authorizationScheme
+        - expiresIn
+        - refreshExpiresIn
+        - sessionId
+        - user
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token。
+        refreshToken:
+          type: string
+          description: opaque refresh token。
+        authorizationScheme:
+          type: string
+          description: HTTP Authorization 授权方案，当前固定为 Bearer。
+          example: Bearer
+        expiresIn:
+          type: integer
+          format: int64
+          description: access token 有效秒数。
+          example: 1800
+        refreshExpiresIn:
+          type: integer
+          format: int64
+          description: refresh token 有效秒数。
+          example: 2592000
+        sessionId:
+          type: string
+          description: 服务端认证会话标识。
+        user:
+          $ref: '#/components/schemas/UserInfo'
+    TokenPairResponse:
+      type: object
+      description: token pair 响应。
+      required:
+        - accessToken
+        - refreshToken
+        - authorizationScheme
+        - expiresIn
+        - refreshExpiresIn
+        - sessionId
+        - user
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token。
+        refreshToken:
+          type: string
+          description: opaque refresh token。
+        authorizationScheme:
+          type: string
+          description: HTTP Authorization 授权方案，当前固定为 Bearer。
+          example: Bearer
+        expiresIn:
+          type: integer
+          format: int64
+          description: access token 有效秒数。
+          example: 1800
+        refreshExpiresIn:
+          type: integer
+          format: int64
+          description: refresh token 有效秒数。
+          example: 2592000
+        sessionId:
+          type: string
+          description: 服务端认证会话标识。
+        user:
+          $ref: '#/components/schemas/UserInfo'
+    PingResponse:
+      type: object
+      description: 系统探活接口返回对象。
+      required:
+        - serviceName
+        - activeProfiles
+        - serverTime
+      properties:
+        serviceName:
+          type: string
+          description: 当前服务名称。
+          example: eventhub-backend
+        activeProfiles:
+          type: array
+          description: 当前实例激活的环境列表。
+          items:
+            type: string
+          example:
+            - dev
+        serverTime:
+          type: string
+          format: date-time
+          description: 服务端生成本次响应的时间。
+    EchoResponse:
+      type: object
+      description: 回显示例接口返回对象。
+      required:
+        - message
+        - tag
+        - echoedAt
+      properties:
+        message:
+          type: string
+          description: 本次回显的消息内容。
+          example: hello eventhub
+        tag:
+          type: string
+          nullable: true
+          description: 本次回显附带的可选标签。
+          example: bootstrap
+        echoedAt:
+          type: string
+          format: date-time
+          description: 服务端生成回显结果的时间。
+    HealthResponse:
+      type: object
+      description: Actuator 健康检查响应。
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: UP
+    InfoResponse:
+      type: object
+      description: Actuator 应用信息响应。
+      required:
+        - app
+        - runtime
+      properties:
+        app:
+          $ref: '#/components/schemas/AppInfoResponse'
+        runtime:
+          $ref: '#/components/schemas/RuntimeInfoResponse'
+    AppInfoResponse:
+      type: object
+      description: 应用元数据。
+      required:
+        - name
+        - env
+        - version
+        - activeProfiles
+      properties:
+        name:
+          type: string
+          example: eventhub-backend
+        env:
+          type: string
+          enum:
+            - dev
+            - test
+            - prod
+          example: dev
+        version:
+          type: string
+          example: dev
+        activeProfiles:
+          type: array
+          items:
+            type: string
+          example:
+            - dev
+    RuntimeInfoResponse:
+      type: object
+      description: 运行时元数据。
+      required:
+        - serverTime
+      properties:
+        serverTime:
+          type: string
+          format: date-time
+          description: 服务端时间。

@@ -33,3 +33,7 @@ func normalizeEnv(value string) string {
 		return EnvDev
 	}
 }
+
+func defaultOpenAPIEnabled(env string) bool {
+	return env != EnvProd
+}

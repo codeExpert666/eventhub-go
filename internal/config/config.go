@@ -46,6 +46,9 @@ type Config struct {
 
 	// AuthToken 保存 access token 和 refresh token 的签发配置。
 	AuthToken AuthTokenConfig
+
+	// OpenAPI 保存接口文档入口配置。生产环境默认关闭，避免暴露接口契约。
+	OpenAPI OpenAPIConfig
 }
 
 // LogConfig 保存日志系统的启动配置。
@@ -83,6 +86,12 @@ type AuthTokenConfig struct {
 	RefreshTokenTTL time.Duration
 }
 
+// OpenAPIConfig 保存 OpenAPI 文档入口配置。
+type OpenAPIConfig struct {
+	// Enabled 控制是否注册 /openapi.yaml 和 /swagger/* 文档入口。
+	Enabled bool
+}
+
 // Load 从环境变量加载配置，并对外部输入做标准化和兜底处理。
 //
 // 本函数不会因为配置缺失或格式错误直接退出进程；对于当前阶段的基础配置，
@@ -117,6 +126,9 @@ func Load() Config {
 			AccessTokenSigningSecret: getEnv("EVENTHUB_ACCESS_TOKEN_SIGNING_SECRET", signingSecretFallback),
 			AccessTokenTTL:           getEnvDuration("EVENTHUB_ACCESS_TOKEN_TTL", defaultAccessTokenTTL),
 			RefreshTokenTTL:          getEnvDuration("EVENTHUB_REFRESH_TOKEN_TTL", defaultRefreshTokenTTL),
+		},
+		OpenAPI: OpenAPIConfig{
+			Enabled: getEnvBool("OPENAPI_ENABLED", defaultOpenAPIEnabled(env)),
 		},
 	}
 

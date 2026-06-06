@@ -43,6 +43,19 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+// getEnvBool 读取布尔环境变量；缺失或无法解析时回退到默认值。
+func getEnvBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 // parseLogLevel 将环境变量中的日志级别文本转换为 slog.Level。
 func parseLogLevel(value string) slog.Level {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
