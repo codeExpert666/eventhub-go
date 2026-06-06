@@ -392,6 +392,91 @@ func TestAdminUpdateUserStatusEndpointDisablesOldAccessToken(t *testing.T) {
 	assertHTTPError(t, me, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
 }
 
+func TestAuthParitySmokeFlow(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	userID := registerViaHTTPAndReturnUserID(t, router, "smokeuser", "smokeuser@example.com")
+	login := loginAndReturnTokenPair(t, router, "smokeuser", "Password123")
+
+	me := performRequest(router, http.MethodGet, "/api/v1/me", nil, map[string]string{
+		"Authorization": "Bearer " + login.accessToken,
+	})
+	if me.Code != http.StatusOK {
+		t.Fatalf("me status=%d body=%s", me.Code, me.Body.String())
+	}
+	meData := decodeAPIResponse(t, me)["data"].(map[string]any)
+	if meData["username"] != "smokeuser" || meData["status"] != "ENABLED" {
+		t.Fatalf("unexpected me response: %#v", meData)
+	}
+
+	refreshResponse := performRequest(router, http.MethodPost, "/api/v1/auth/refresh", jsonBody(t, map[string]string{
+		"refreshToken": login.refreshToken,
+	}), jsonHeaders())
+	if refreshResponse.Code != http.StatusOK {
+		t.Fatalf("refresh status=%d body=%s", refreshResponse.Code, refreshResponse.Body.String())
+	}
+	refreshData := decodeAPIResponse(t, refreshResponse)["data"].(map[string]any)
+	if refreshData["sessionId"] != login.sessionID {
+		t.Fatalf("expected same session id after refresh, got %#v", refreshData)
+	}
+	if refreshData["refreshToken"] == "" || refreshData["refreshToken"] == login.refreshToken {
+		t.Fatalf("expected rotated refresh token, got %#v", refreshData)
+	}
+
+	replay := performRequest(router, http.MethodPost, "/api/v1/auth/refresh", jsonBody(t, map[string]string{
+		"refreshToken": login.refreshToken,
+	}), jsonHeaders())
+	assertHTTPError(t, replay, http.StatusUnauthorized, "AUTH-401", "refresh token 无效或已过期")
+
+	refreshedAccessToken := refreshData["accessToken"].(string)
+	logout := performRequest(router, http.MethodPost, "/api/v1/auth/logout", nil, map[string]string{
+		"Authorization": "Bearer " + refreshedAccessToken,
+	})
+	if logout.Code != http.StatusOK {
+		t.Fatalf("logout status=%d body=%s", logout.Code, logout.Body.String())
+	}
+	logoutBody := decodeAPIResponse(t, logout)
+	if logoutBody["code"] != "COMMON-000" || logoutBody["data"] != nil {
+		t.Fatalf("unexpected logout body: %#v", logoutBody)
+	}
+
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+	adminList := performRequest(router, http.MethodGet, "/api/v1/admin/users?username=smokeuser", nil, map[string]string{
+		"Authorization": "Bearer " + adminToken,
+	})
+	if adminList.Code != http.StatusOK {
+		t.Fatalf("admin list status=%d body=%s", adminList.Code, adminList.Body.String())
+	}
+	listData := decodeAPIResponse(t, adminList)["data"].(map[string]any)
+	if listData["total"] != float64(1) {
+		t.Fatalf("expected one smoke user, got %#v", listData)
+	}
+	items := listData["items"].([]any)
+	item := items[0].(map[string]any)
+	if item["id"] != float64(userID) || item["username"] != "smokeuser" {
+		t.Fatalf("unexpected admin list item: %#v", item)
+	}
+
+	disable := performRequest(router, http.MethodPatch, "/api/v1/admin/users/"+
+		strconv.FormatInt(userID, 10)+"/status", jsonBody(t, map[string]string{
+		"status": "DISABLED",
+	}), map[string]string{
+		"Authorization": "Bearer " + adminToken,
+		"Content-Type":  "application/json",
+	})
+	if disable.Code != http.StatusOK {
+		t.Fatalf("disable status=%d body=%s", disable.Code, disable.Body.String())
+	}
+	disableData := decodeAPIResponse(t, disable)["data"].(map[string]any)
+	if disableData["status"] != "DISABLED" {
+		t.Fatalf("expected disabled status, got %#v", disableData)
+	}
+
+	oldTokenMe := performRequest(router, http.MethodGet, "/api/v1/me", nil, map[string]string{
+		"Authorization": "Bearer " + login.accessToken,
+	})
+	assertHTTPError(t, oldTokenMe, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
+}
+
 func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	t.Helper()
 	codec, err := jwt.NewCodec(
