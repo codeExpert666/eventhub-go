@@ -1,21 +1,47 @@
 OAPI_CODEGEN_VERSION ?= v2.5.0
 KIN_OPENAPI_VERSION ?= v0.131.0
+SQLC_VERSION ?= v1.30.0
+MIGRATE_VERSION ?= v4.19.0
+GOLANGCI_LINT_VERSION ?= v1.64.8
+
 OPENAPI_SPEC := api/openapi/eventhub.yaml
 OPENAPI_GEN := api/openapi/gen/eventhub.gen.go
+DOCKER_IMAGE ?= eventhub-go:local
+GOLANGCI_LINT_IMAGE ?= golangci/golangci-lint:$(GOLANGCI_LINT_VERSION)
+MIGRATE_DATABASE_URL ?= mysql://eventhub:eventhub@tcp(localhost:3306)/eventhub?multiStatements=true
+MIGRATE_STEPS ?= 1
 
-.PHONY: fmt sqlc test vet openapi-validate openapi-generate openapi-check
+.PHONY: fmt vet test test-race lint quality sqlc migrate-up migrate-down openapi-validate openapi-generate openapi-check docker-build compose-up compose-down
 
 fmt:
 	gofmt -w .
 
-sqlc:
-	go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
+vet:
+	go vet ./...
 
 test:
 	go test ./...
 
-vet:
-	go vet ./...
+test-race:
+	go test -race ./...
+
+lint:
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		docker run --rm -v "$(CURDIR):/app" -w /app $(GOLANGCI_LINT_IMAGE) golangci-lint run ./...; \
+	fi
+
+quality: fmt vet test lint
+
+sqlc:
+	go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate
+
+migrate-up:
+	go run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path migrations -database "$(MIGRATE_DATABASE_URL)" up
+
+migrate-down:
+	go run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path migrations -database "$(MIGRATE_DATABASE_URL)" down $(MIGRATE_STEPS)
 
 openapi-validate:
 	go run github.com/getkin/kin-openapi/cmd/validate@$(KIN_OPENAPI_VERSION) $(OPENAPI_SPEC)
@@ -26,3 +52,13 @@ openapi-generate:
 
 openapi-check: openapi-validate openapi-generate
 	git diff --exit-code $(OPENAPI_GEN)
+
+docker-build:
+	docker build -t $(DOCKER_IMAGE) .
+
+compose-up:
+	docker compose rm -sf migrate
+	docker compose up --build
+
+compose-down:
+	docker compose down

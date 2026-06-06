@@ -19,9 +19,16 @@ func Bootstrap(ctx context.Context) (_ *Application, err error) {
 		return nil, fmt.Errorf("provide platform dependencies: %w", err)
 	}
 	defer func() {
-		if err != nil && platform.Database != nil {
-			if closeErr := platform.Database.Close(); closeErr != nil {
-				platform.Logger.Error("failed to close bootstrap database after setup error", "error", closeErr)
+		if err != nil {
+			if platform.Redis != nil {
+				if closeErr := platform.Redis.Close(); closeErr != nil {
+					platform.Logger.Error("failed to close bootstrap redis after setup error", "error", closeErr)
+				}
+			}
+			if platform.Database != nil {
+				if closeErr := platform.Database.Close(); closeErr != nil {
+					platform.Logger.Error("failed to close bootstrap database after setup error", "error", closeErr)
+				}
 			}
 		}
 	}()
@@ -34,5 +41,5 @@ func Bootstrap(ctx context.Context) (_ *Application, err error) {
 	}
 	httpDeps := providers.ProviderHTTP(platform, system, auth, user)
 
-	return NewApplication(platform.Logger, httpDeps.Server, platform.Database), nil
+	return NewApplication(platform.Logger, httpDeps.Server, platform.Database, platform.Redis), nil
 }

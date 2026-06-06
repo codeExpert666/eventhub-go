@@ -1,6 +1,6 @@
 # EventHub Go
 
-EventHub Go 是 Java 版 EventHub 的 Go port，用于用 Go 生态自然写法复刻 Java 版的业务语义、API 契约、错误码、数据库模型、测试策略和文档沉淀方式。
+EventHub Go 是 Java 版 EventHub 的 Go port，用 Go 生态自然写法复刻 Java 版的业务语义、API 契约、错误码、数据库模型、测试策略和文档沉淀方式。
 
 Java 版参考项目：
 
@@ -8,41 +8,153 @@ Java 版参考项目：
 /Users/xinnz/Library/Mobile Documents/com~apple~CloudDocs/Code/Java/eventhub
 ```
 
-## 当前阶段
+## 当前能力
 
-- 已完成 HTTP foundation：应用入口、router、server、requestId、recover、统一响应、错误码、分页、system ping/echo/health/info。
-- 已完成项目结构规范化：应用装配进入 `internal/app`，system HTTP DTO 进入 `internal/http/dto`，system service 进入 `internal/service/system`，request id 进入 `internal/platform/idgen`。
-- 业务模块、数据库、migration、sqlc、OpenAPI、Docker、认证授权、活动、订单、支付等仍待迁移。
+- HTTP foundation：应用入口、router、server、requestId、recover、统一响应、错误码、分页、system ping/echo/health/info。
+- OpenAPI / Swagger：spec-first `api/openapi/eventhub.yaml`，dev/test 默认开启，prod 默认关闭。
+- Auth / user 基础能力：注册、登录、refresh、logout、当前用户、管理员用户查询与状态更新。
+- 持久化底座：MySQL migration、sqlc、repository/mysql、Testcontainers MySQL 集成测试。
+- 本地工程闭环：Dockerfile、Docker Compose、Makefile 质量门禁、golangci-lint 配置与 Docker fallback。
 
-## 本地运行
+## 前置条件
+
+- Go 1.24+
+- Docker / Docker Compose
+- 可选：`golangci-lint` 本机安装
+
+本机安装固定版本 golangci-lint：
 
 ```bash
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+```
+
+不安装也可以运行：
+
+```bash
+make lint
+```
+
+当本机找不到 `golangci-lint` 时，Makefile 会使用固定版本 Docker 镜像 `golangci/golangci-lint:v1.64.8` 执行 lint。
+
+## 完整 Docker Compose 启动
+
+```bash
+make compose-up
+```
+
+该命令会启动：
+
+- `mysql`: MySQL 8.4
+- `redis`: Redis 7.2
+- `migrate`: 使用 golang-migrate 执行 `migrations/`
+- `app`: Go 后端应用容器
+
+应用容器会等待 MySQL healthy、Redis healthy、migration 成功完成后启动，并使用 `GET /actuator/health` 做 healthcheck。
+`make compose-up` 会先移除上一次已完成或失败的 `migrate` 容器，再启动完整 Compose 栈，确保新增 migration 后会重新执行 `migrate up`。
+
+验证：
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+清理容器：
+
+```bash
+make compose-down
+```
+
+Compose 中 app 使用 prod-like 本地演示配置，`OPENAPI_ENABLED=false`，因此默认不会暴露 Swagger / OpenAPI。Compose 示例密码和 token secret 只适合本地演示，不能用于生产。
+
+## 本机开发启动
+
+只启动依赖：
+
+```bash
+docker compose up -d mysql redis
+```
+
+执行 migration：
+
+```bash
+make migrate-up
+```
+
+加载 dev 环境变量并启动应用：
+
+```bash
+set -a
+source configs/dev.env.example
+set +a
 go run ./cmd/eventhub
 ```
 
-默认监听 `:8080`。可通过环境变量覆盖：
+常用地址：
 
-- `EVENTHUB_APP_NAME`
-- `EVENTHUB_ENV`
-- `EVENTHUB_HTTP_PORT`
-- `EVENTHUB_VERSION`
-- `EVENTHUB_LOG_LEVEL`
+- Health: `http://localhost:8080/actuator/health`
+- Info: `http://localhost:8080/actuator/info`
+- System ping: `http://localhost:8080/api/v1/system/ping`
+- OpenAPI YAML（dev/test 默认开启）: `http://localhost:8080/openapi.yaml`
+- Swagger UI（dev/test 默认开启）: `http://localhost:8080/swagger/`
 
-## 验证
+回滚最近 1 个 migration 版本：
 
 ```bash
-gofmt -w .
-go test ./...
-go vet ./...
+make migrate-down
 ```
 
-也可以使用 Makefile：
+如需指定数据库或回滚步数：
+
+```bash
+MIGRATE_DATABASE_URL='mysql://eventhub:eventhub@tcp(localhost:3306)/eventhub?multiStatements=true' make migrate-up
+MIGRATE_STEPS=2 make migrate-down
+```
+
+## 质量门禁
+
+常用命令：
 
 ```bash
 make fmt
-make test
 make vet
+make test
+make test-race
+make lint
+make quality
 ```
+
+`make quality` 串联：
+
+```text
+fmt -> vet -> test -> lint
+```
+
+SQL、OpenAPI 和容器相关命令：
+
+```bash
+make sqlc
+make openapi-validate
+make openapi-generate
+make openapi-check
+make docker-build
+make compose-up
+make compose-down
+```
+
+## 环境配置
+
+示例文件：
+
+- `configs/dev.env.example`
+- `configs/test.env.example`
+- `configs/prod.env.example`
+
+关键约束：
+
+- `EVENTHUB_ENV=dev/test` 时，`OPENAPI_ENABLED` 默认开启。
+- `EVENTHUB_ENV=prod` 时，`OPENAPI_ENABLED` 默认关闭。
+- Dockerfile runtime 默认 `EVENTHUB_ENV=prod` 且 `OPENAPI_ENABLED=false`。
+- 生产环境必须显式注入 `EVENTHUB_ACCESS_TOKEN_SIGNING_SECRET` 和真实数据库/Redis 凭据。
 
 ## 目录结构
 
@@ -51,14 +163,15 @@ cmd/eventhub/              可执行入口，保持极薄
 internal/app/              应用装配与生命周期
 internal/config/           环境变量配置、profile 和对外配置结构
 internal/http/             router、server、middleware、handler、dto、response、validation
-internal/service/system/   当前 system 基础能力服务
-internal/apperror/         错误码、应用错误和错误映射
-internal/page/             分页请求与响应模型
-internal/platform/         clock、idgen、log 等跨业务基础设施
-docs/ai/                   设计、实现说明、ADR、Java-Go parity matrix
-api/openapi/               OpenAPI 契约未来落点
-migrations/                数据库 migration 未来落点
+internal/service/          业务 service
+internal/repository/       repository interface
+internal/repository/mysql/ sqlc 包装与 MySQL repository 实现
+internal/platform/         db、redis、clock、idgen、log 等基础设施
+internal/security/         JWT、refresh token、principal、password
+api/openapi/               OpenAPI 契约与生成代码
+migrations/                golang-migrate SQL migration
 configs/                   环境变量示例
+docs/ai/                   设计、实现说明、ADR、Java-Go parity matrix
 ```
 
 ## 文档纪律

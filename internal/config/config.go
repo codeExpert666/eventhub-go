@@ -44,6 +44,9 @@ type Config struct {
 	// Database 保存 MySQL 连接池配置。DSN 为空时，运行态不会装配依赖数据库的业务路由。
 	Database DatabaseConfig
 
+	// Redis 保存 Redis 连接配置。Addr 为空时，运行态不会创建 Redis 客户端。
+	Redis RedisConfig
+
 	// AuthToken 保存 access token 和 refresh token 的签发配置。
 	AuthToken AuthTokenConfig
 
@@ -72,6 +75,24 @@ type DatabaseConfig struct {
 	ConnMaxLifetime time.Duration
 	// ConnMaxIdleTime 控制连接在空闲状态下可保留的最长时间。
 	ConnMaxIdleTime time.Duration
+}
+
+// RedisConfig 保存 Redis 连接配置。
+type RedisConfig struct {
+	// Addr 是 Redis 服务地址，例如 localhost:6379 或 redis:6379。
+	Addr string
+	// Username 是 Redis ACL 用户名；本地开发通常为空。
+	Username string
+	// Password 是 Redis 密码；本地开发通常为空。
+	Password string
+	// DB 是 Redis 逻辑库编号。
+	DB int
+	// DialTimeout 控制建立 Redis 连接的最长等待时间。
+	DialTimeout time.Duration
+	// ReadTimeout 控制 Redis 读操作的最长等待时间。
+	ReadTimeout time.Duration
+	// WriteTimeout 控制 Redis 写操作的最长等待时间。
+	WriteTimeout time.Duration
 }
 
 // AuthTokenConfig 保存认证令牌配置。
@@ -120,6 +141,15 @@ func Load() Config {
 			MaxIdleConns:    getEnvInt("EVENTHUB_MYSQL_MAX_IDLE_CONNS", 2),
 			ConnMaxLifetime: getEnvDuration("EVENTHUB_MYSQL_CONN_MAX_LIFETIME", 30*time.Minute),
 			ConnMaxIdleTime: getEnvDuration("EVENTHUB_MYSQL_CONN_MAX_IDLE_TIME", 5*time.Minute),
+		},
+		Redis: RedisConfig{
+			Addr:         getEnv("EVENTHUB_REDIS_ADDR", ""),
+			Username:     getEnv("EVENTHUB_REDIS_USERNAME", ""),
+			Password:     getEnv("EVENTHUB_REDIS_PASSWORD", ""),
+			DB:           getEnvInt("EVENTHUB_REDIS_DB", 0),
+			DialTimeout:  getEnvDuration("EVENTHUB_REDIS_DIAL_TIMEOUT", 5*time.Second),
+			ReadTimeout:  getEnvDuration("EVENTHUB_REDIS_READ_TIMEOUT", 3*time.Second),
+			WriteTimeout: getEnvDuration("EVENTHUB_REDIS_WRITE_TIMEOUT", 3*time.Second),
 		},
 		AuthToken: AuthTokenConfig{
 			Issuer:                   getEnv("EVENTHUB_AUTH_TOKEN_ISSUER", defaultAppName),

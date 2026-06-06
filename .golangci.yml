@@ -1,8 +1,12 @@
 run:
-  timeout: 3m
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
 
 linters:
+  disable-all: true
   enable:
+    - gofmt
     - govet
     - ineffassign
     - staticcheck
@@ -10,3 +14,5 @@ linters:
 
 issues:
   exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0

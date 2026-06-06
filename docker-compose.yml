@@ -1,0 +1,106 @@
+name: eventhub-go
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: eventhub-go-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: eventhub
+      MYSQL_USER: eventhub
+      MYSQL_PASSWORD: eventhub
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7.2
+    container_name: eventhub-go-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  migrate:
+    image: migrate/migrate:v4.19.0
+    container_name: eventhub-go-migrate
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - -path
+      - /migrations
+      - -database
+      - mysql://eventhub:eventhub@tcp(mysql:3306)/eventhub?multiStatements=true
+      - up
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: eventhub-go:local
+    container_name: eventhub-go-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      EVENTHUB_APP_NAME: eventhub-backend
+      EVENTHUB_ENV: prod
+      EVENTHUB_HTTP_PORT: 8080
+      EVENTHUB_VERSION: compose
+      EVENTHUB_LOG_LEVEL: INFO
+      OPENAPI_ENABLED: "false"
+      EVENTHUB_MYSQL_DSN: eventhub:eventhub@tcp(mysql:3306)/eventhub?charset=utf8mb4&parseTime=true&loc=Local
+      EVENTHUB_MYSQL_MAX_OPEN_CONNS: 10
+      EVENTHUB_MYSQL_MAX_IDLE_CONNS: 2
+      EVENTHUB_MYSQL_CONN_MAX_LIFETIME: 30m
+      EVENTHUB_MYSQL_CONN_MAX_IDLE_TIME: 5m
+      EVENTHUB_REDIS_ADDR: redis:6379
+      EVENTHUB_REDIS_USERNAME: ""
+      EVENTHUB_REDIS_PASSWORD: ""
+      EVENTHUB_REDIS_DB: 0
+      EVENTHUB_REDIS_DIAL_TIMEOUT: 5s
+      EVENTHUB_REDIS_READ_TIMEOUT: 3s
+      EVENTHUB_REDIS_WRITE_TIMEOUT: 3s
+      EVENTHUB_AUTH_TOKEN_ISSUER: eventhub-backend
+      EVENTHUB_ACCESS_TOKEN_SIGNING_SECRET: eventhub-compose-access-token-secret-change-me
+      EVENTHUB_ACCESS_TOKEN_TTL: 30m
+      EVENTHUB_REFRESH_TOKEN_TTL: 720h
+      TZ: Asia/Shanghai
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  mysql_data:
+  redis_data:

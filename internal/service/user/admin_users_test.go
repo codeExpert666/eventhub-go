@@ -104,7 +104,7 @@ func TestUpdateStatusReturnsUpdatedUser(t *testing.T) {
 		},
 		found: true,
 	}
-	roles := &userServiceRoleRepo{rolesByUserID: map[int64][]string{2: []string{"USER"}}}
+	roles := &userServiceRoleRepo{rolesByUserID: map[int64][]string{2: {"USER"}}}
 	tx := &userServiceCountingTx{}
 	service := NewService(users, roles, tx)
 
