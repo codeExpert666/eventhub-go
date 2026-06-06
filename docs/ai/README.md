@@ -13,21 +13,46 @@
 - `parity/`
   - Java-Go 业务语义、接口契约、错误码、数据库模型和测试策略对齐记录
 
-## 命名建议
+## 命名规则
 
-常规文档统一使用：
+Go 版 `docs/ai` 文档以序号表达迁移顺序和决策顺序，不使用日期前缀。
+
+设计文档和实现说明统一使用三位递增序号：
 
 ```text
-YYYY-MM-DD-主题.md
+docs/ai/design/NNN-主题.md
+docs/ai/implementation/NNN-主题.md
+```
+
+规则：
+
+- 常规 design / implementation 配对文档的 `NNN` 从 `000` 开始，按创建顺序递增，创建前以 `docs/ai/design/` 中已有常规三位序号的最大值为准。
+- 同一次非微小修改的 design 和 implementation 使用同一个 `NNN` 与同一个主题名。
+- 文件所在目录已经表达文档类型，文件名不额外追加 `-design` 或 `-implementation`。
+- 主题使用简短 kebab-case，优先英文，例如 `017-doc-naming-rule-alignment.md`。
+
+少数被明确标记为 implementation-only、没有对应 design 的实现说明使用独立命名空间：
+
+```text
+docs/ai/implementation/implementation-only-NNN-主题.md
+```
+
+implementation-only 的 `NNN` 从 `000` 开始，只参考已有 `implementation-only-NNN-*.md` 文件递增，不占用常规 design / implementation 配对编号。
+
+ADR 使用四位递增序号，独立于 design / implementation 序号：
+
+```text
+docs/ai/adr/NNNN-主题.md
 ```
 
 例如：
 
-- `2026-06-01-user-auth-design.md`
-- `2026-06-01-user-auth-implementation.md`
-- `2026-06-02-refresh-token-rotation.md`
+- `docs/ai/design/017-doc-naming-rule-alignment.md`
+- `docs/ai/implementation/017-doc-naming-rule-alignment.md`
+- `docs/ai/implementation/implementation-only-000-example.md`
+- `docs/ai/adr/0023-example-decision.md`
 
-仓库初始化类文档可以使用 `000-` 或 `0001-` 前缀，表示它们是 Go 版规则基线，而不是某个业务迭代日期快照。
+Parity 文档以稳定索引名为主，例如 `docs/ai/parity/java-go-parity-matrix.md`。专题契约文档可以使用清晰、稳定的名称，不强制套用迭代序号。
 
 ## 写作原则
 

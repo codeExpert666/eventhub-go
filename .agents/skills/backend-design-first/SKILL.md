@@ -74,8 +74,11 @@ Before writing the design note, read and follow:
 Then create or update a design note under:
 - `docs/ai/design/`
 
-Suggested filename:
-- `YYYY-MM-DD-<topic>-design.md`
+Filename rule:
+- `NNN-<topic>.md`
+- Use the next zero-padded three-digit sequence for regular design / implementation pairs under `docs/ai/design/`, for example `017-doc-naming-rule-alignment.md`.
+- The directory already conveys the document type, so do not append `-design` unless it is part of the topic itself.
+- The matching implementation note for the same change should reuse the same `NNN` and topic.
 
 Keep the same section order as the template unless the task clearly needs a different structure. If the structure changes, explain why in the document.
 
@@ -114,8 +117,12 @@ Before writing the implementation note, read and follow:
 Then create or update an implementation note under:
 - `docs/ai/implementation/`
 
-Suggested filename:
-- `YYYY-MM-DD-<topic>-implementation.md`
+Filename rule:
+- `NNN-<topic>.md`
+- Reuse the design note's `NNN` and topic when documenting the same change, for example `017-doc-naming-rule-alignment.md`.
+- If there is no matching design note because the task is explicitly scoped as implementation-only, use the independent implementation-only namespace: `implementation-only-NNN-<topic>.md`.
+- The `NNN` in `implementation-only-NNN-<topic>.md` starts at `000` and is calculated only from existing implementation-only notes, so implementation-only work does not consume or collide with regular design / implementation pair numbers.
+- The directory already conveys the document type, so do not append `-implementation` unless it is part of the topic itself.
 
 The implementation note must answer:
 1. What problem was solved
@@ -146,6 +153,10 @@ If the task introduces a meaningful architectural or engineering trade-off, read
 
 Then add or update:
 - `docs/ai/adr/`
+
+ADR filename rule:
+- `NNNN-<decision-topic>.md`
+- Use the next zero-padded four-digit ADR sequence, independent from design / implementation numbering.
 
 # Output Format After Completion
 
