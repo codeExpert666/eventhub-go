@@ -28,7 +28,7 @@
   - MySQL / Redis 使用 healthcheck。
   - app 依赖 MySQL healthy、Redis healthy 和 migration 成功完成后再启动。
   - app 使用 `GET /actuator/health` 作为容器 healthcheck。
-  - 项目推荐入口必须在每次完整启动前移除旧的 `migrate` 容器，避免新增 migration 后复用已完成的一次性容器。
+  - 项目推荐入口在每次完整启动前移除旧的 `migrate` 容器，让一次性 migration job 从新容器执行；这不是因为旧容器启动不会重跑 command，而是为了避免旧容器状态、旧 command/env/image 配置和排障歧义。
 - 明确 migration 执行策略：
   - Go 版不把 migration 自动塞进应用启动流程。
   - Compose 使用一次性 `migrate` service 执行 `up`。
@@ -161,7 +161,7 @@
   - MySQL 不健康：`migrate` 和 `app` 不启动。
   - Redis 不健康：`app` 不启动。
   - migration 失败：`app` 不启动，开发者通过 `docker compose logs migrate` 或 `make migrate-up` 排查。
-  - 已存在旧 `migrate` 容器：`make compose-up` 会先移除它，再让 Compose 创建新的 migration job；如果开发者直接运行裸 `docker compose up --build`，仍可能复用旧容器，因此 README 推荐使用 Makefile 入口。
+  - 已存在旧 `migrate` 容器：Docker 启动已退出容器时会重新执行容器 command，且 bind mount 能看到新增的 migration 文件；`make compose-up` 仍先移除旧容器，再让 Compose 创建新的 migration job，以避免旧容器状态、旧 command/env/image 配置和非 Compose 管理容器带来的歧义。
   - app 启动失败：容器退出或 healthcheck unhealthy。
   - lint 本机未安装：Makefile 自动走固定版本 Docker 镜像；若 Docker 不可用则 lint 失败并暴露原因。
 - 状态流转：
@@ -234,7 +234,7 @@
   - golangci-lint Docker fallback 需要 Docker 可用；没有本机工具且 Docker 不可用时 lint 无法执行。
   - Compose 使用本地演示密码，不能代表生产部署安全方案。
   - migration job 成功后 app 才启动，但 app runtime 本身不负责自动迁移；部署流程必须显式执行 migration。
-  - 裸 `docker compose up --build` 不会感知 bind mount 里的 migration SQL 内容变化；本地完整启动应使用 `make compose-up`。
+  - 裸 `docker compose up --build` 不会因为 bind mount 里的 migration SQL 内容变化而重建容器；如果已退出的 `migrate` 容器被启动，command 会重新执行并看到新增文件，但仍会沿用该容器创建时保存的 command/env/image 配置。本地完整启动推荐使用 `make compose-up`。
   - `.dockerignore` 规则过宽可能让未来新增的 `go:embed` 资源在 Docker build 阶段缺失；新增 embed 或 Dockerfile 内校验步骤时必须同步审视 ignore 规则。
   - Alpine runtime 带有轻量 shell/wget 以支持 healthcheck，镜像不是最小的 distroless 形态。
 - 备选方案：

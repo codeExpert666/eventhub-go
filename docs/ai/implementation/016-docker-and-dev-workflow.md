@@ -33,7 +33,7 @@
     - 新增固定版本变量：`SQLC_VERSION`、`MIGRATE_VERSION`、`GOLANGCI_LINT_VERSION`。
     - 新增 `test-race`、`lint`、`quality`、`migrate-up`、`migrate-down`、`docker-build`、`compose-up`、`compose-down`。
     - `lint` 优先使用本机 `golangci-lint`，缺失时使用 `golangci/golangci-lint:v1.64.8`。
-    - `compose-up` 在启动完整栈前先执行 `docker compose rm -sf migrate`，确保旧的一次性 migration 容器不会阻止新增 migration 重新执行。
+    - `compose-up` 在启动完整栈前先执行 `docker compose rm -sf migrate`，确保一次性 migration job 从新容器执行；已退出旧容器被启动时也会重跑 command，但会沿用旧容器创建时保存的 command/env/image 配置。
   - `.golangci.yml`
     - 固定低噪音规则：`gofmt`、`govet`、`ineffassign`、`staticcheck`、`unused`。
     - 使用 `disable-all: true` 避免默认规则漂移。
@@ -60,13 +60,14 @@
   - 已更新。
   - 本次触发容器化、dev/test/prod 配置、migration 执行策略、Redis 启动依赖、质量门禁和 Go-only 工程取舍的 parity 更新。
   - 本次 `.dockerignore` 细化未再次修改 parity matrix；它不改变 API、错误码、数据库模型、认证边界或业务流程，现有“容器化、部署配置与质量门禁”记录已覆盖 Docker 构建上下文管理。
+  - 本次 Compose migration job 文档语义复核未更新 parity matrix；它只澄清 Docker Compose 对已退出一次性容器的启动/复用语义，不改变 API、错误码、数据库模型、migration 文件、repository 行为或 Java-Go 业务对齐状态。
 
 ## 3. 为什么这样设计
 - 关键设计原因
   - Dockerfile 对齐 Java 多阶段镜像思路，但用 Go build stage + 不含 Go 工具链的 Alpine runtime stage 表达 Go 生态运行方式。
   - Alpine runtime 比 `golang` 镜像攻击面更小，同时保留 `wget` 支持 Compose 直接调用 `/actuator/health`。
   - migration 采用 Compose 一次性 job 和 Makefile 显式命令，不塞进 app 启动，避免后续多副本部署时多个 app 竞争 schema 变更。
-  - Compose 中 app 等待 MySQL healthy、Redis healthy 和 migration completed，保证空库本地栈可启动；Makefile `compose-up` 额外移除旧 `migrate` 容器，保证已有栈新增 migration 后也会重新执行 `up`。
+  - Compose 中 app 等待 MySQL healthy、Redis healthy 和 migration completed，保证空库本地栈可启动；Makefile `compose-up` 额外移除旧 `migrate` 容器，让 migration job 使用新容器执行，减少一次性 job 状态和旧 command/env/image 配置带来的歧义。
   - golangci-lint 固定版本并提供 Docker fallback，解决本机没安装工具时 lint 不可运行的问题。
   - `.golangci.yml` 只启用低噪音规则，适合当前业务迁移阶段。
   - `.dockerignore` 采用“构建所需文件保留、本地状态和可再生产物排除”的边界，既减少 context 噪音，也避免把 `api/openapi/eventhub.yaml` 这类 Go embed 输入误排除。
@@ -123,6 +124,8 @@
   - 本次 `.dockerignore` 细化后运行 `go test ./...`：通过。
   - 本次 `.dockerignore` 细化后运行 `go vet ./...`：通过。
   - 本次 `.dockerignore` 细化后运行 `make lint`：通过。
+  - 本次 Compose migration job 文档语义复核使用最小 Compose job 验证：已退出的一次性容器被 `docker compose up` 再次启动时会重新执行 command；作为 `service_completed_successfully` 依赖时，再次启动 app 也会重新启动已退出的 job。
+  - 本次 Compose migration job 文档语义复核运行 `docker compose config --quiet`：通过。
 - Java-Go parity 如何验证
   - 对照 Java `docker-compose.yml` 的 MySQL/Redis/app 编排。
   - 对照 Java `backend/Dockerfile` 的多阶段构建与 runtime 不含构建工具链目标。
@@ -138,7 +141,7 @@
   - Compose 示例密码和 token secret 只适合本地演示。
   - Dockerfile runtime 使用 Alpine，不是最小的 distroless/scratch。
   - Redis 只作为启动期依赖和未来缓存底座，不参与业务健康详情或认证强一致。
-  - 如果绕过 Makefile 直接执行裸 `docker compose up --build`，Compose 仍可能复用已经成功退出的一次性 `migrate` 容器；本地完整启动推荐使用 `make compose-up`。
+  - 如果绕过 Makefile 直接执行裸 `docker compose up --build`，Compose 可能复用已经成功退出的一次性 `migrate` 容器；旧容器被启动时会重跑 command，并能通过 bind mount 看到新增 migration 文件，但不会吸收后续修改过的 command/env/image 配置。本地完整启动推荐使用 `make compose-up`。
   - `.dockerignore` 已排除常见本地文件和产物；未来若新增 `go:embed` 静态资源、Dockerfile 内测试/校验步骤，或需要把 README/docs 打包进镜像，必须同步审视 ignore 规则。
 - 哪些地方后面需要继续演进
   - 增加 CI 质量门禁和镜像构建流水线。

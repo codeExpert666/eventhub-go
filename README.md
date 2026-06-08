@@ -50,7 +50,8 @@ make compose-up
 - `app`: Go 后端应用容器
 
 应用容器会等待 MySQL healthy、Redis healthy、migration 成功完成后启动，并使用 `GET /actuator/health` 做 healthcheck。
-`make compose-up` 会先移除上一次已完成或失败的 `migrate` 容器，再启动完整 Compose 栈，确保新增 migration 后会重新执行 `migrate up`。
+`make compose-up` 会先移除上一次已完成或失败的 `migrate` 容器，再启动完整 Compose 栈，确保 migration job 从新容器执行。
+如果直接运行 `docker compose up`，Compose 复用已退出的 `migrate` 容器时也会重新启动该容器并执行 `migrate up`，且 bind mount 能看到新增的 `migrations/` 文件；项目仍推荐 Makefile 入口，以减少旧容器状态、旧 command/env/image 配置和排障歧义。
 
 验证：
 

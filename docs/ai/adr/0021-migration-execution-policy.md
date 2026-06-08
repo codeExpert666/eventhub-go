@@ -27,7 +27,7 @@ Go 版采用显式 migration 策略：
   - `make migrate-down`
   - `make compose-up`
 - `migrate-down` 默认回退 1 个版本，可通过 `MIGRATE_STEPS` 覆盖。
-- `make compose-up` 在执行 `docker compose up --build` 前先执行 `docker compose rm -sf migrate`，确保旧的一次性 migration 容器不会被复用，新增 migration 后会重新运行 `up`。
+- `make compose-up` 在执行 `docker compose up --build` 前先执行 `docker compose rm -sf migrate`，确保一次性 migration job 从新容器执行；启动已退出的旧容器也会重新运行 `up`，但会沿用旧容器创建时保存的 command/env/image 配置。
 - 本地和 CI 可通过 `MIGRATE_DATABASE_URL` 指向目标数据库。
 
 ## 备选方案
@@ -44,7 +44,7 @@ Go 版采用显式 migration 策略：
 - 不把 schema 变更职责塞进业务应用进程，避免后续多副本部署时 app 启动竞争 migration。
 - Makefile 命令适合本地开发、CI 和手工排障。
 - Compose `migrate` job 让 `docker compose up --build` 在空库上可重复启动，不要求开发者手工先运行迁移。
-- `make compose-up` 先移除旧 `migrate` 容器，可以避免裸 Compose 对 bind mount 中 migration SQL 内容变化不敏感而复用已完成 job。
+- `make compose-up` 先移除旧 `migrate` 容器，可以避免裸 Compose 复用已完成 job 时带来的状态和配置歧义；bind mount 中新增的 migration SQL 在旧容器重启时仍可见。
 - `migrate-down` 默认 1 步更保守，避免误把本地 schema 全部回滚。
 
 没有选择其他方案：
@@ -63,7 +63,7 @@ Go 版采用显式 migration 策略：
 - 代价
   - Compose 中会出现一个正常退出的一次性 `migrate` 容器。
   - 本机手动运行应用前需要先执行 `make migrate-up`。
-  - 本地完整启动应优先使用 `make compose-up`；裸 `docker compose up --build` 仍可能复用旧的 `migrate` 容器。
+  - 本地完整启动应优先使用 `make compose-up`；裸 `docker compose up --build` 可能复用旧的 `migrate` 容器，虽然旧容器启动会重跑 command，但不会吸收后续修改过的 command/env/image 配置。
   - 生产部署需要明确 migration job 或发布阶段命令，不能只启动 app。
 - 后续可能需要调整的地方
   - CI 可增加专门的 migration up/down 验证。
