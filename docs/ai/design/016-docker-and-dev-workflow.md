@@ -19,6 +19,10 @@
   - build 阶段使用 Go 官方镜像编译 `cmd/eventhub`。
   - runtime 阶段使用不含 Go 编译工具链的轻量运行镜像。
   - 容器默认以 prod 安全姿态运行，`OPENAPI_ENABLED=false`。
+- 完善 `.dockerignore`：
+  - 使用中文注释按类别说明忽略原因，便于后续维护。
+  - 排除 Git/CI 元数据、IDE、本地 AI/索引状态、文档、环境变量、密钥、日志、构建/测试/覆盖率/性能分析产物。
+  - 保留 Go 编译、OpenAPI embed、migration 和配置示例所需文件，不把 `api/`、`migrations/`、`configs/*.env.example` 排除出构建上下文。
 - 新增 `docker-compose.yml`：
   - 启动 MySQL 8.4、Redis 7.2、migration job 和 Go app。
   - MySQL / Redis 使用 healthcheck。
@@ -139,11 +143,12 @@
 
 ## 8. 关键流程
 - Docker build 正常流程：
-  1. build stage 复制 `go.mod` / `go.sum` 并下载依赖。
-  2. 复制源码。
-  3. 使用 `CGO_ENABLED=0` 编译 `./cmd/eventhub`。
-  4. runtime stage 只复制二进制。
-  5. runtime 容器以非 root 用户运行。
+  1. Docker CLI 先按 `.dockerignore` 过滤构建上下文，只发送 Go 编译、embed 和运行契约需要的文件。
+  2. build stage 复制 `go.mod` / `go.sum` 并下载依赖。
+  3. 复制源码。
+  4. 使用 `CGO_ENABLED=0` 编译 `./cmd/eventhub`。
+  5. runtime stage 只复制二进制。
+  6. runtime 容器以非 root 用户运行。
 - Compose 正常流程：
   1. 启动 `mysql`，等待 `mysqladmin ping` 通过。
   2. 启动 `redis`，等待 `redis-cli ping` 通过。
@@ -188,6 +193,7 @@
   - 不修改 JWT。
   - 不把角色、邮箱、用户名、用户状态写入 JWT。
 - 是否涉及敏感信息、审计或操作日志：
+  - `.dockerignore` 排除 `.env`、`.env.*`、`*.env`、本地密钥/证书和日志，降低误把本机凭据、调试输出或 agent 状态发送进 Docker build context 的风险。
   - `configs/prod.env.example` 不提供真实密钥；生产密钥必须由外部注入。
   - Dockerfile runtime 默认 `EVENTHUB_ENV=prod` 且 `OPENAPI_ENABLED=false`，避免镜像裸跑时暴露 Swagger。
   - Compose 中的密码和 token secret 只用于本地演示，README 明确不可用于生产。
@@ -203,6 +209,8 @@
   - Compose `migrate` 和 `make migrate-up/down` 使用现有 migration。
 - 接口验证：
   - `curl http://localhost:8080/actuator/health` 验证 app 容器可响应健康检查。
+- Docker build context 验证：
+  - `.dockerignore` 变化后运行 `docker build`，确认忽略 Dockerfile/Compose 元数据、docs、本地环境和产物后仍能完成 `go build ./cmd/eventhub`。
 - OpenAPI validate：
   - 本次不改 OpenAPI 契约；`quality` 不默认串联 openapi validate，避免每次普通代码质量门禁都触发生成工具下载。
   - `openapi-validate` 保持独立目标，API 契约变更时运行。
@@ -227,6 +235,7 @@
   - Compose 使用本地演示密码，不能代表生产部署安全方案。
   - migration job 成功后 app 才启动，但 app runtime 本身不负责自动迁移；部署流程必须显式执行 migration。
   - 裸 `docker compose up --build` 不会感知 bind mount 里的 migration SQL 内容变化；本地完整启动应使用 `make compose-up`。
+  - `.dockerignore` 规则过宽可能让未来新增的 `go:embed` 资源在 Docker build 阶段缺失；新增 embed 或 Dockerfile 内校验步骤时必须同步审视 ignore 规则。
   - Alpine runtime 带有轻量 shell/wget 以支持 healthcheck，镜像不是最小的 distroless 形态。
 - 备选方案：
   - 方案 A：使用 distroless/static 作为最终运行镜像。

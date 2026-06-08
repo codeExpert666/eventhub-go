@@ -11,11 +11,12 @@
 - golangci-lint 固定版本并提供本机未安装时的 Docker fallback。
 - dev/test/prod env example 补齐 Redis 配置，并保持 prod 默认关闭 OpenAPI/Swagger。
 - README 更新本地开发、Compose、migration、lint 和质量门禁说明。
+- `.dockerignore` 进一步补齐中文分类注释和本地/敏感/可再生产物忽略规则，让 Docker build context 更稳定、更小，也更不容易误带本机状态。
 
 ## 2. 改动内容
 - 新增了什么
   - `Dockerfile`：Go build stage + Alpine runtime stage。
-  - `.dockerignore`：减少 Docker build context。
+  - `.dockerignore`：减少 Docker build context；后续补充中文分类注释和更完整的本地文件过滤规则。
   - `docker-compose.yml`：编排 `mysql`、`redis`、`migrate`、`app`。
   - `docs/ai/design/016-docker-and-dev-workflow.md`。
   - `docs/ai/implementation/016-docker-and-dev-workflow.md`。
@@ -23,6 +24,11 @@
   - `docs/ai/adr/0021-migration-execution-policy.md`。
   - `docs/ai/adr/0022-golangci-lint-quality-gate.md`。
 - 修改了什么
+  - `.dockerignore`
+    - 按 Git/CI、Docker 元数据、OS/IDE、本地 AI/索引状态、文档、本地环境/密钥、构建测试产物、日志八类组织规则。
+    - 新增 `.github/`、`.dockerignore`、`Dockerfile`、`docker-compose*.yml`、`docker-compose*.yaml`、`.gitattributes`、本地 swap 文件、`.env*`、`*.env`、密钥/证书、`bin/`、`build/`、`out/`、coverage/test/profile 产物和 `logs/` 忽略规则。
+    - 使用 `!*.env.example` 和 `!configs/*.env.example` 保留配置示例，避免把真实本地环境文件和示例配置混为一谈。
+    - 刻意不忽略 `api/`、`migrations/`、`configs/*.env.example`，因为 OpenAPI YAML 通过 Go embed 编入二进制，migration 和配置示例仍属于项目运行契约。
   - `Makefile`
     - 新增固定版本变量：`SQLC_VERSION`、`MIGRATE_VERSION`、`GOLANGCI_LINT_VERSION`。
     - 新增 `test-race`、`lint`、`quality`、`migrate-up`、`migrate-down`、`docker-build`、`compose-up`、`compose-down`。
@@ -53,6 +59,7 @@
 - 是否更新 Java-Go parity 记录
   - 已更新。
   - 本次触发容器化、dev/test/prod 配置、migration 执行策略、Redis 启动依赖、质量门禁和 Go-only 工程取舍的 parity 更新。
+  - 本次 `.dockerignore` 细化未再次修改 parity matrix；它不改变 API、错误码、数据库模型、认证边界或业务流程，现有“容器化、部署配置与质量门禁”记录已覆盖 Docker 构建上下文管理。
 
 ## 3. 为什么这样设计
 - 关键设计原因
@@ -62,6 +69,7 @@
   - Compose 中 app 等待 MySQL healthy、Redis healthy 和 migration completed，保证空库本地栈可启动；Makefile `compose-up` 额外移除旧 `migrate` 容器，保证已有栈新增 migration 后也会重新执行 `up`。
   - golangci-lint 固定版本并提供 Docker fallback，解决本机没安装工具时 lint 不可运行的问题。
   - `.golangci.yml` 只启用低噪音规则，适合当前业务迁移阶段。
+  - `.dockerignore` 采用“构建所需文件保留、本地状态和可再生产物排除”的边界，既减少 context 噪音，也避免把 `api/openapi/eventhub.yaml` 这类 Go embed 输入误排除。
 - 与 Go 项目当前阶段的匹配点
   - `handler -> service -> repository -> sqlc/database` 没有被破坏。
   - Redis 只在 composition root 启动期装配和 ping，不进入 handler/service 业务语义。
@@ -84,6 +92,8 @@
   - 没有采用。历史验证已经多次遇到本机未安装导致 lint 未运行。
 - 方案 E：一次性开启大量 lint 规则。
   - 没有采用。当前阶段优先保障业务 parity、分层边界和低噪音质量门禁，复杂度/风格规则留到后续逐步引入。
+- 方案 F：把 `api/`、`migrations/`、`configs/` 也全部排除。
+  - 没有采用。`api/openapi/eventhub.yaml` 是 Go embed 输入，`migrations/` 和配置示例是部署/迁移契约的一部分；当前 Dockerfile 只编译二进制，但过度忽略会让后续 Docker 内校验或 embed 资源更容易缺失。
 
 ## 5. 测试与验证
 - 跑了哪些测试
@@ -109,6 +119,10 @@
   - app 以 `env=prod` 启动，并持续通过 `/actuator/health` healthcheck。
   - `make compose-down` 后前台 `make compose-up` 会话正常退出。
   - review 修复后通过 `make -n compose-up` 确认命令顺序为先移除 `migrate` 容器，再执行 `docker compose up --build`。
+  - 本次 `.dockerignore` 细化后运行 `docker build -t eventhub-go:dockerignore-check .`，构建上下文为 8.92kB，`COPY . .` 后 `go build ./cmd/eventhub` 成功。
+  - 本次 `.dockerignore` 细化后运行 `go test ./...`：通过。
+  - 本次 `.dockerignore` 细化后运行 `go vet ./...`：通过。
+  - 本次 `.dockerignore` 细化后运行 `make lint`：通过。
 - Java-Go parity 如何验证
   - 对照 Java `docker-compose.yml` 的 MySQL/Redis/app 编排。
   - 对照 Java `backend/Dockerfile` 的多阶段构建与 runtime 不含构建工具链目标。
@@ -125,6 +139,7 @@
   - Dockerfile runtime 使用 Alpine，不是最小的 distroless/scratch。
   - Redis 只作为启动期依赖和未来缓存底座，不参与业务健康详情或认证强一致。
   - 如果绕过 Makefile 直接执行裸 `docker compose up --build`，Compose 仍可能复用已经成功退出的一次性 `migrate` 容器；本地完整启动推荐使用 `make compose-up`。
+  - `.dockerignore` 已排除常见本地文件和产物；未来若新增 `go:embed` 静态资源、Dockerfile 内测试/校验步骤，或需要把 README/docs 打包进镜像，必须同步审视 ignore 规则。
 - 哪些地方后面需要继续演进
   - 增加 CI 质量门禁和镜像构建流水线。
   - 生产部署文档需要补 migration job、Secret 管理、镜像扫描和回滚策略。

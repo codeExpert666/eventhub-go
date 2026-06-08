@@ -1,11 +1,55 @@
+# Git 元数据与 CI 配置不参与镜像构建。
 .git
 .gitignore
+.gitattributes
+.github/
+
+# Docker 构建和编排文件只由 Docker CLI 读取，不需要被 COPY 进 build stage。
+.dockerignore
+Dockerfile
+docker-compose*.yml
+docker-compose*.yaml
+
+# 本地操作系统、编辑器和 IDE 状态。
 .DS_Store
-.idea
-.vscode
+.idea/
+.vscode/
+*.swp
+*.swo
 
-tmp
-dist
-coverage
+# AI 协作、代码索引和本机 agent 状态，可能包含本机路径、偏好配置或大体积缓存。
+AGENTS.md
+.agents/
+.codegraph/
+.codex/
 
+# 工程文档不参与 Go 二进制编译；docs/ai 仍保留在仓库中用于设计与复盘。
+docs/
+
+# 本地环境变量、密钥和证书不要进入构建上下文；示例配置允许保留。
+.env
+.env.*
+*.env
+!*.env.example
+!configs/*.env.example
+*.key
+*.pem
+*.crt
+
+# 构建、测试、覆盖率和性能分析产物。
+tmp/
+dist/
+bin/
+build/
+out/
+coverage/
+coverage.*
+*.coverprofile
+*.test
+*.out
+*.prof
+*.pprof
+
+# 日志文件和日志目录。
 *.log
+logs/
