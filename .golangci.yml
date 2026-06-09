@@ -1,18 +1,38 @@
+# golangci-lint v2 配置文件；Makefile 固定使用同一主版本运行。
+version: "2"
+
+# run 控制 golangci-lint 如何加载和分析 Go package。
 run:
+  # 单次 lint 最大运行时间，避免本地或 CI 长时间卡住。
   timeout: 5m
+  # 同时分析 *_test.go，确保测试代码也遵守基础质量规则。
   tests: true
+  # 使用 Go module readonly 模式；lint 过程中不允许隐式修改 go.mod/go.sum。
   modules-download-mode: readonly
 
+# linters 控制静态分析规则集合。
 linters:
-  disable-all: true
+  # 不启用 golangci-lint 默认规则集，只运行下方显式列出的低噪音规则。
+  default: none
   enable:
-    - gofmt
+    # Go 官方 go vet 规则，检查可疑构造、格式化参数、锁复制等问题。
     - govet
+    # 检查赋值后从未被使用的变量，常见于 err 或临时变量被覆盖。
     - ineffassign
+    # Staticcheck 规则集合，覆盖 bug、废弃 API、不必要代码等静态问题。
     - staticcheck
+    # 检查未使用的常量、变量、函数、类型和 import。
     - unused
+  # 不配置 exclusions.presets，保持不启用默认排除预设；
+  # 这等价于 v1 配置中的 issues.exclude-use-default: false。
 
+# formatters 控制格式类检查；golangci-lint run 会检查格式，但不会改写文件。
+formatters:
+  enable:
+    # 检查代码是否符合 gofmt 格式；需要自动修复时运行 make fmt。
+    - gofmt
+
+# issues 控制问题输出数量；0 表示不限制，便于完整看到所有待修复项。
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0

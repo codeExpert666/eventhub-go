@@ -2,7 +2,8 @@ OAPI_CODEGEN_VERSION ?= v2.5.0
 KIN_OPENAPI_VERSION ?= v0.131.0
 SQLC_VERSION ?= v1.30.0
 MIGRATE_VERSION ?= v4.19.0
-GOLANGCI_LINT_VERSION ?= v1.64.8
+GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT_EXPECTED_VERSION := $(patsubst v%,%,$(GOLANGCI_LINT_VERSION))
 
 OPENAPI_SPEC := api/openapi/eventhub.yaml
 OPENAPI_GEN := api/openapi/gen/eventhub.gen.go
@@ -27,7 +28,13 @@ test-race:
 
 lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
+		local_version=$$(golangci-lint version 2>/dev/null || true); \
+		if printf '%s\n' "$$local_version" | grep -q "version $(GOLANGCI_LINT_EXPECTED_VERSION) "; then \
+			golangci-lint run ./...; \
+		else \
+			echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required; found: $${local_version:-unknown}; falling back to Docker image $(GOLANGCI_LINT_IMAGE)."; \
+			docker run --rm -v "$(CURDIR):/app" -w /app $(GOLANGCI_LINT_IMAGE) golangci-lint run ./...; \
+		fi; \
 	else \
 		docker run --rm -v "$(CURDIR):/app" -w /app $(GOLANGCI_LINT_IMAGE) golangci-lint run ./...; \
 	fi

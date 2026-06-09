@@ -25,7 +25,7 @@ Java 版参考项目：
 本机安装固定版本 golangci-lint：
 
 ```bash
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 ```
 
 不安装也可以运行：
@@ -34,7 +34,7 @@ go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 make lint
 ```
 
-当本机找不到 `golangci-lint` 时，Makefile 会使用固定版本 Docker 镜像 `golangci/golangci-lint:v1.64.8` 执行 lint。
+当本机找不到 `golangci-lint`，或本机版本不是固定版本 `v2.12.2` 时，Makefile 会使用固定版本 Docker 镜像 `golangci/golangci-lint:v2.12.2` 执行 lint。`.golangci.yml` 使用 v2 配置格式，因此本机安装时也应使用上述固定版本。
 
 ## 完整 Docker Compose 启动
 
