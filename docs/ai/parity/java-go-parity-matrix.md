@@ -8,7 +8,7 @@ Java 版参考项目：
 /Users/xinnz/Library/Mobile Documents/com~apple~CloudDocs/Code/Java/eventhub
 ```
 
-最近核验日期：2026-06-06。
+最近核验日期：2026-06-07。
 
 本矩阵只做领域级索引；接口字段、错误场景和流程细节放入专题 parity 文档、design、implementation note 或 ADR。
 
@@ -39,7 +39,7 @@ Java 版参考项目：
 | Auth、当前用户与管理员用户 API | `AuthController.java`、`UserController.java`、`AdminUserController.java`、auth DTO/VO、`AuthServiceImpl.java`、`SecurityConfig.java`、auth integration tests | `internal/http/handler/{auth,user}`、`internal/http/dto/{auth,user}`、`internal/service/{auth,user}`、`internal/http/middleware/{auth,rbac}.go`、`internal/security/*`、`internal/http/auth_integration_test.go` | 已对齐 | Go 已实现 register/login/refresh/logout、`GET /api/v1/me`、`GET /api/v1/admin/users`、`PATCH /api/v1/admin/users/{userId}/status`；字段、错误码、RBAC、JWT claim、refresh token 轮换和 session 语义见 `docs/ai/parity/java-auth-api-contract.md`，当前 P0/P1/P2 审计见 `docs/ai/parity/current-auth-contract-checklist.md`。参考 design/implementation 008、013、014、018，ADR-0011 至 0017。 |
 | 认证错误与安全响应 | `AuthException.java`、`RestAuthenticationEntryPoint.java`、`RestAccessDeniedHandler.java`、`SecurityErrorResponseWriter.java` | `internal/apperror`、`internal/http/handler/{auth,user}`、`internal/http/middleware/{auth,rbac}.go` | 已对齐 | 重复账号、账号密码错误、用户禁用、缺失/过期/篡改 access token、无效/过期/重放 refresh token、普通用户访问管理员接口、更新不存在用户均映射到 Java 对齐的 HTTP 状态、错误码和核心消息。细节见 `docs/ai/parity/java-auth-api-contract.md` 和 `docs/ai/parity/current-auth-contract-checklist.md`。 |
 | 当前阶段 parity audit | Java 当前 controller、DTO、VO、ErrorCode、migration、mapper、安全配置、OpenAPI 配置和测试目录 | `docs/ai/design/018-current-parity-audit.md`、`docs/ai/implementation/018-current-parity-audit.md`、`docs/ai/parity/current-auth-contract-checklist.md`、`docs/ai/parity/test-coverage-comparison.md`、`internal/http/auth_integration_test.go` | 已对齐 | 2026-06-06 审计未发现生产代码 P0 差异；P1 单条 auth/admin smoke flow 已通过 `TestAuthParitySmokeFlow` 补齐；P2 有意差异集中在 Go spec-first OpenAPI 路径、prod 文档关闭状态码和 sqlc offset 防护。 |
-| 容器化、部署配置与质量门禁 | Java `backend/Dockerfile`、`docker-compose.yml`、`application-dev/prod/test.yml`、prod OpenAPI hardening ADR | Go `Dockerfile`、`docker-compose.yml`、`configs/*.env.example`、`README.md`、`Makefile`、`.golangci.yml` | 已对齐 | Go 多阶段 Dockerfile、MySQL/Redis/migrate/app compose、healthcheck、prod 默认关闭 OpenAPI、显式 migration job、`make quality`、固定 golangci-lint v2 版本、v2 配置格式、本机版本探测与 Docker fallback 已落地。参考 design/implementation 016、020，ADR-0020、0021、0022。 |
+| 容器化、部署配置与质量门禁 | Java `backend/Dockerfile`、`docker-compose.yml`、`application-dev/prod/test.yml`、prod OpenAPI hardening ADR | Go `Dockerfile`、`docker-compose.yml`、`configs/*.env.example`、`README.md`、`Makefile`、`.golangci.yml`、`.github/workflows/ci.yml` | 已对齐 | Go 多阶段 Dockerfile、MySQL/Redis/migrate/app compose、healthcheck、prod 默认关闭 OpenAPI、显式 migration job、`make quality`、固定 golangci-lint v2 版本、v2 配置格式、本机版本探测与 Docker fallback、GitHub Actions CI 已落地；CI 复用 Makefile 校验 fmt/vet/test/lint、sqlc/OpenAPI 生成物漂移和 Docker build，不做发布部署或镜像推送。参考 design/implementation 016、019、020，ADR-0020、0021、0022。 |
 | 活动、场次、票种、库存、订单、支付、通知、审计 | Java `docs/roadmap/stage-2` 至 `stage-7`；当前 Java production code 尚未落地 | Go 后续 event/order/payment/notification/audit 相关 domain/service/repository/handler | 待决策 | 双端当前 production code 都未进入这些业务模块；Go 后续以 Java roadmap 或未来 Java 实现为语义来源，重点补库存扣减、幂等、订单状态机、支付回调、通知和操作日志。 |
 
 ## 后续维护规则

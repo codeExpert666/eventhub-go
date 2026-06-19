@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# CI 只需要检出仓库代码，因此将 GITHUB_TOKEN 保持为只读权限。
+# 写在顶层默认作用于所有 job，每个 job 允许单独写一份 permissions 进行覆盖
+permissions:
+  contents: read
+
+# workflow 是当前流程名，Git ref 是触发 CI 的分支或 PR 引用。
+# 同一分组只保留最新一次 CI 运行，旧的 CI 运行若仍存在则会被取消。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 多个 job 之间在没有 needs 依赖时，若 runner 资源足够，则会并行执行。
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      # 每个 job 独立运行；Checkout 默认检出触发本次 workflow 的 commit/ref 对应代码。
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 从 go.mod 读取 Go 版本并配置到 PATH，供后续 go/make 命令使用。
+      # 启用 Go modules 缓存与构建缓存，加速重复 CI 运行。
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Format Go files
+        run: make fmt
+
+      # 若格式化产生未提交 diff，git diff --exit-code 会返回非 0 使 CI 失败。
+      - name: Check formatting drift
+        run: git diff --exit-code
+
+      - name: Run go vet
+        run: make vet
+
+      - name: Run tests
+        run: make test
+
+      - name: Run lint
+        run: make lint
+
+  generated-contract:
+    name: Generated Contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Generate sqlc code
+        run: make sqlc
+
+      # 只检查 sqlc 生成目录，确保生成代码已同步提交。
+      - name: Check sqlc generated code drift
+        run: git diff --exit-code internal/repository/mysql/sqlc
+
+      - name: Check OpenAPI contract and generated code
+        run: make openapi-check
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+
+    # GitHub 托管的 Ubuntu runner 已预装 Docker/Compose，可直接运行 docker 命令。
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 解析并校验 Compose 配置；--quiet 只用退出码表达结果，不打印解析后的完整配置。
+      - name: Check Docker Compose config
+        run: docker compose config --quiet
+
+      - name: Build Docker image
+        run: make docker-build
