@@ -2,6 +2,7 @@
 OAPI_CODEGEN_VERSION ?= v2.5.0
 KIN_OPENAPI_VERSION ?= v0.131.0
 OPENAPI_SPEC := api/openapi/eventhub.yaml
+OAPI_CODEGEN_CONFIG := api/openapi/oapi-codegen.yaml
 OPENAPI_GEN := api/openapi/gen/eventhub.gen.go
 
 # 数据库代码生成与 migration 工具。
@@ -85,7 +86,7 @@ openapi-validate:
 
 openapi-generate:
 	mkdir -p api/openapi/gen
-	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) -generate types,chi-server -package gen -o $(OPENAPI_GEN) $(OPENAPI_SPEC)
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) -config $(OAPI_CODEGEN_CONFIG) $(OPENAPI_SPEC)
 
 openapi-check:
 	$(MAKE) openapi-validate
