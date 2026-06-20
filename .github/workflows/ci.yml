@@ -39,21 +39,8 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Format Go files
-        run: make fmt
-
-      # 若格式化产生未提交 diff，git diff --exit-code 会返回非 0 使 CI 失败。
-      - name: Check formatting drift
-        run: git diff --exit-code
-
-      - name: Run go vet
-        run: make vet
-
-      - name: Run tests
-        run: make test
-
-      - name: Run lint
-        run: make lint
+      - name: Run quality checks
+        run: make quality-check
 
   generated-contract:
     name: Generated Contract
@@ -72,15 +59,8 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Generate sqlc code
-        run: make sqlc
-
-      # 只检查 sqlc 生成目录，确保生成代码已同步提交。
-      - name: Check sqlc generated code drift
-        run: git diff --exit-code internal/repository/mysql/sqlc
-
-      - name: Check OpenAPI contract and generated code
-        run: make openapi-check
+      - name: Check generated contracts
+        run: make generated-check
 
   docker:
     name: Docker

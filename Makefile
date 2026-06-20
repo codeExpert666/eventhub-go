@@ -21,10 +21,15 @@ GOLANGCI_LINT_IMAGE ?= golangci/golangci-lint:$(GOLANGCI_LINT_VERSION)
 # 应用镜像构建目标。
 DOCKER_IMAGE ?= eventhub-go:local
 
-.PHONY: fmt vet test test-race lint quality sqlc migrate-up migrate-down openapi-validate openapi-generate openapi-check docker-build compose-up compose-down
+.PHONY: fmt fmt-check vet test test-race lint quality quality-check sqlc sqlc-check migrate-up migrate-down openapi-validate openapi-generate openapi-check generated-check docker-build compose-up compose-down
 
 fmt:
 	gofmt -w .
+
+# check 目标用 $(MAKE) 调已有 target，这种子 make 可以继承调用时父 make 的参数和变量。
+fmt-check:
+	$(MAKE) fmt
+	git diff --exit-code -- '*.go'
 
 vet:
 	go vet ./...
@@ -53,9 +58,20 @@ lint:
 # race detector 成本更高，保留为显式 test-race 专项检查。
 quality: fmt vet test lint
 
+# 用 recipe 中的 $(MAKE) 明确串行执行顺序，避免并行 make 打乱检查先后顺序。
+quality-check:
+	$(MAKE) fmt-check
+	$(MAKE) vet
+	$(MAKE) test
+	$(MAKE) lint
+
 # 下面的生成/维护目标频率较低，用 go run module@version 固定版本，避免要求本机预装多个 CLI。
 sqlc:
 	go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate
+
+sqlc-check:
+	$(MAKE) sqlc
+	git diff --exit-code internal/repository/mysql/sqlc
 
 migrate-up:
 	go run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path migrations -database "$(MIGRATE_DATABASE_URL)" up
@@ -71,8 +87,14 @@ openapi-generate:
 	mkdir -p api/openapi/gen
 	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) -generate types,chi-server -package gen -o $(OPENAPI_GEN) $(OPENAPI_SPEC)
 
-openapi-check: openapi-validate openapi-generate
+openapi-check:
+	$(MAKE) openapi-validate
+	$(MAKE) openapi-generate
 	git diff --exit-code $(OPENAPI_GEN)
+
+generated-check:
+	$(MAKE) sqlc-check
+	$(MAKE) openapi-check
 
 # 构建本地应用镜像；默认标签 eventhub-go:local，可用 DOCKER_IMAGE 覆盖。
 docker-build:

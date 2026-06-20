@@ -117,11 +117,13 @@ MIGRATE_STEPS=2 make migrate-down
 
 ```bash
 make fmt
+make fmt-check
 make vet
 make test
 make test-race
 make lint
 make quality
+make quality-check
 ```
 
 `make quality` 串联：
@@ -130,13 +132,23 @@ make quality
 fmt -> vet -> test -> lint
 ```
 
+`make quality-check` 串联：
+
+```text
+fmt-check -> vet -> test -> lint
+```
+
+其中 `*-check` 目标会先执行对应格式化或生成命令，再用 `git diff --exit-code` 暴露未提交漂移，供本地验证和 CI 复用。
+
 SQL、OpenAPI 和容器相关命令：
 
 ```bash
 make sqlc
+make sqlc-check
 make openapi-validate
 make openapi-generate
 make openapi-check
+make generated-check
 make docker-build
 make compose-up
 make compose-down

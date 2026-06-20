@@ -2,6 +2,7 @@
 
 ## 1. 背景
 - 当前 Go 版 EventHub 已具备 `Makefile` 质量门禁、固定版本 golangci-lint、sqlc 生成、OpenAPI 契约生成校验、Dockerfile 和 Docker Compose，但仓库还没有 `.github/workflows`，无法在 pull request 或 `main` push 时自动验证这些工程能力。
+- 2026-06-20 更新：CI 初版中 `fmt` 和 `sqlc` 漂移检查拆成“先运行维护命令，再在 workflow 里直接执行 `git diff`”，而 OpenAPI 已由 `make openapi-check` 封装 validate/generate/diff。三类检查语义相同却分布在不同位置，容易让本地与 CI 入口再次漂移，因此需要把 check 规则统一沉回 `Makefile`。
 - Java 版参考仓库当前未发现 `.github/workflows`，因此本次不迁移 Java CI 文件；语义来源主要是 Java 版已有容器化 / profile / OpenAPI hardening 文档，以及 Go 版已沉淀的工程质量设计：
   - Java `backend/Dockerfile`、`docker-compose.yml`、prod OpenAPI hardening ADR。
   - Go `docs/ai/design/016-docker-and-dev-workflow.md`、`docs/ai/implementation/016-docker-and-dev-workflow.md`。
@@ -16,14 +17,20 @@
   - `permissions: contents: read`
 - 增加 `concurrency`，同一 ref 上新运行会取消旧运行，避免重复消耗 CI 资源。
 - 复用仓库已有 `Makefile` 目标和固定工具版本，避免 GitHub Actions 与本地门禁漂移。
+- 新增 `Makefile` check 入口，统一表达“先格式化 / 生成，再检查是否有未提交漂移”的规则：
+  - `make fmt-check`
+  - `make sqlc-check`
+  - `make generated-check`
+  - `make quality-check`
 - CI 分为三个 job：
   - `quality`：Go 格式、vet、测试、lint。
   - `generated-contract`：sqlc 生成代码漂移、OpenAPI validate/generate/check。
   - `docker`：Compose 配置静态校验和 Docker image build。
 - 成功标准：
-  - Go 代码格式漂移能通过 `make fmt` 后的 `git diff --exit-code` 暴露。
-  - sqlc generated code 漂移能通过 `git diff --exit-code internal/repository/mysql/sqlc` 暴露。
+  - Go 代码格式漂移能通过 `make fmt-check` 暴露。
+  - sqlc generated code 漂移能通过 `make sqlc-check` 暴露。
   - OpenAPI generated code 漂移能通过 `make openapi-check` 暴露。
+  - CI 中生成物漂移统一通过 `make generated-check` 覆盖 sqlc 和 OpenAPI。
   - Dockerfile 能完成 `make docker-build`。
   - Compose 文件能通过 `docker compose config --quiet` 静态解析。
 
@@ -34,16 +41,19 @@
 - 不做发布、部署、镜像推送、PR 自动评论、制品上传、镜像扫描、SBOM 或签名。
 - 默认不在 CI 中运行 `make compose-up`，避免 PR 校验引入长时间运行服务、端口占用、健康等待和清理复杂度。
 - 默认不在本次 CI 中运行 `make test-race`，先把核心门禁固化；race 检查作为后续成本评估后的增强项。
-- 不新增 Makefile target；现有目标已经能表达本次 CI 所需检查，workflow 只做编排。
+- 不新增顶层 `make ci` 或发布流水线；本次只补齐质量门禁和生成物漂移 check 入口。
+- 不改变 `make quality` 的本地维护语义；它仍会执行可修复格式化的 `make fmt`。CI 和本地只读式验证使用新增的 `make quality-check`。
 
 ## 4. 影响范围
 - 涉及 Go package / 模块：
   - 不触碰 Go package。
   - 不新增、移动或删除业务 Go 文件。
 - 涉及文件：
-  - 新增 `.github/workflows/ci.yml`。
-  - 新增 `docs/ai/design/019-ci-workflow.md`。
-  - 后续新增 `docs/ai/implementation/019-ci-workflow.md`。
+  - 新增 / 更新 `.github/workflows/ci.yml`。
+  - 更新 `Makefile`。
+  - 更新 `README.md` 的质量门禁说明。
+  - 新增 / 更新 `docs/ai/design/019-ci-workflow.md`。
+  - 新增 / 更新 `docs/ai/implementation/019-ci-workflow.md`。
   - 更新 `docs/ai/parity/java-go-parity-matrix.md` 的“容器化、部署配置与质量门禁”行。
 - 涉及 API / 表 / 缓存 / 外部接口：
   - 不涉及生产 API、数据库表、Redis 缓存或外部业务接口。
@@ -65,6 +75,12 @@
 - `DockerJob`
   - 验证 `docker-compose.yml` 可解析，`Dockerfile` 可构建。
   - 不启动完整 Compose stack。
+- `MakefileCheckTarget`
+  - `fmt-check`：执行 `make fmt` 后检查 Go 文件是否产生 diff。
+  - `sqlc-check`：执行 `make sqlc` 后检查 `internal/repository/mysql/sqlc` 是否产生 diff。
+  - `openapi-check`：执行 OpenAPI validate/generate 后检查 `api/openapi/gen/eventhub.gen.go` 是否产生 diff。
+  - `generated-check`：聚合 sqlc 与 OpenAPI 生成物漂移检查。
+  - `quality-check`：聚合 `fmt-check -> vet -> test -> lint`，作为 CI 的质量 job 入口。
 - 与 Java 版领域对象的对应关系：
   - Java Maven/Gradle CI 概念不逐行迁移。
   - Go 版以 Makefile 和 Go toolchain 表达同等工程质量闭环。
@@ -92,7 +108,7 @@
 - migration 计划：无。
 - sqlc query / generated model 影响：
   - 不修改 sqlc query 或 generated code。
-  - CI 会执行 `make sqlc` 并检查 `internal/repository/mysql/sqlc` 是否有 diff，确保生成结果被提交。
+  - `make sqlc-check` 会执行 `make sqlc` 并检查 `internal/repository/mysql/sqlc` 是否有 diff，确保生成结果被提交。
 - 数据一致性考虑：
   - 不涉及业务数据读写。
   - repository integration tests 中 Testcontainers MySQL 仍由 `make test` 触发；Docker 不可用时测试按当前逻辑 skip。
@@ -102,18 +118,18 @@
   1. checkout 仓库。
   2. setup Go，使用 `go-version-file: go.mod`，开启 Go cache。
   3. `go mod download`。
-  4. `make fmt`。
-  5. `git diff --exit-code`，捕获 `gofmt -w .` 在 CI 中造成的格式漂移。
-  6. `make vet`。
-  7. `make test`。
-  8. `make lint`，复用 Makefile 固定 golangci-lint 版本和 Docker fallback。
+  4. `make quality-check`：
+     - `fmt-check` 执行 `gofmt -w .` 并用 `git diff --exit-code -- '*.go'` 捕获 Go 格式漂移。
+     - `vet` 执行 `go vet ./...`。
+     - `test` 执行 `go test ./...`。
+     - `lint` 复用 Makefile 固定 golangci-lint 版本和 Docker fallback。
 - `generated-contract` 正常流程：
   1. checkout 仓库。
   2. setup Go，使用 `go-version-file: go.mod`，开启 Go cache。
   3. `go mod download`。
-  4. `make sqlc`。
-  5. `git diff --exit-code internal/repository/mysql/sqlc`。
-  6. `make openapi-check`，内部执行 OpenAPI validate、generate 和 generated file diff。
+  4. `make generated-check`：
+     - `sqlc-check` 执行 `sqlc generate` 并检查 `internal/repository/mysql/sqlc` 漂移。
+     - `openapi-check` 执行 OpenAPI validate、generate 和 generated file diff。
 - `docker` 正常流程：
   1. checkout 仓库。
   2. `docker compose config --quiet`。
@@ -161,25 +177,25 @@
 - service / repository 测试：
   - CI 中由 `make test` 覆盖；Testcontainers MySQL 依赖 Docker，Docker 可用时运行，Docker 不可用时按测试逻辑 skip。
 - migration / sqlc 验证：
-  - CI 中执行 `make sqlc` 并检查 `internal/repository/mysql/sqlc` diff。
+  - CI 中执行 `make sqlc-check`，由 Makefile 负责运行 sqlc 并检查 `internal/repository/mysql/sqlc` diff。
   - 本次不新增 migration up/down CI job；后续可单独评估真实 MySQL migration 验证成本。
 - 接口验证：
   - CI 中由 `make test` 覆盖现有 handler / HTTP integration 测试。
 - OpenAPI validate：
   - CI 中执行 `make openapi-check`。
 - 异常场景验证：
-  - `git diff --exit-code` 覆盖格式、sqlc 和 OpenAPI generated code 漂移。
+  - `make fmt-check` 覆盖 Go 格式漂移。
+  - `make sqlc-check` 覆盖 sqlc generated code 漂移。
+  - `make openapi-check` 覆盖 OpenAPI generated code 漂移。
   - `docker compose config --quiet` 覆盖 compose YAML 和服务依赖结构可解析。
 - Java-Go parity 验证：
   - 本次不改变 Java-Go 业务契约。
   - parity matrix 记录 Go CI workflow 作为质量门禁工程能力。
 - 需要运行的命令：
-  - `make fmt`
-  - `make vet`
-  - `make test`
-  - `make lint`
-  - `make sqlc` 后检查生成代码是否有 diff
+  - `make quality-check`
+  - `make generated-check`
   - `make openapi-check`
+  - `make sqlc-check`
   - `docker compose config --quiet`
   - `make docker-build`
 
@@ -193,16 +209,18 @@
   - 方案 A：只运行 `make quality`。
   - 方案 B：在 CI 中运行 `make compose-up` 并做 HTTP smoke。
   - 方案 C：把 `test-race` 纳入每次 PR。
-  - 方案 D：新增 Makefile `ci` 或 `check` target，把所有 CI 命令写入 Makefile。
+  - 方案 D：继续在 GitHub Actions YAML 中分散写 `git diff`，不新增 `fmt-check`、`sqlc-check` 等 Makefile 入口。
   - 方案 E：Docker build 只在 `push main` 跑，不阻塞 PR。
+  - 方案 F：新增顶层 `make ci`，把 quality、generated 和 docker 全部收进一个入口。
 - 为什么不选备选方案：
   - 不选方案 A：`make quality` 不覆盖 sqlc/OpenAPI generated drift 和 Dockerfile/Compose 校验；且 `make fmt` 会原地修改文件，需要 workflow 额外 `git diff --exit-code`。
   - 不选方案 B：完整 Compose 启动会拉取 MySQL/Redis/migrate，涉及端口、健康等待和清理，当前更适合后续独立 smoke target。
   - 不选方案 C：race 检查成本更高，当前先建立核心 CI；后续可按耗时和稳定性评估加入 nightly 或独立 job。
-  - 不选方案 D：现有 Makefile 目标已经足够表达本次门禁；新增 target 会增加一层维护对象，当前收益不明显。
+  - 不选方案 D：fmt/sqlc/OpenAPI 的漂移检查语义一致，继续把其中两类检查留在 workflow 中会让本地和 CI 使用不同入口。
   - 不选方案 E：Dockerfile 是当前工程能力的一部分，PR 阶段阻塞能更早暴露运行镜像编译失败。
+  - 不选方案 F：Docker build 与 Go 质量 / 生成物检查属于不同耗时和依赖层级；当前保留 job 级拆分，让 CI 日志和失败定位更清楚。
 - 后续可演进点：
-  - 增加 `make ci`，当 CI 命令组合稳定后让本地和远端入口更集中。
+  - 增加 `make ci`，当 CI 命令组合稳定后让本地和远端入口进一步集中。
   - 增加 `test-race` 的定期 workflow 或按标签触发的 job。
   - 增加 migration up/down CI 验证或 Compose smoke target。
   - 增加 Docker image 扫描、SBOM、签名和部署流水线，但应作为后续发布设计处理。
