@@ -4,8 +4,9 @@
 - 当前 Go 版已经采用 spec-first OpenAPI，`api/openapi/eventhub.yaml` 是业务接口契约源，并通过 `make openapi-check` 做 validate/generate 漂移检查。
 - 现有业务接口约定统一返回 `ApiResponse` envelope，分页接口约定使用 `PageResponse` / `PageResponseUserInfo`，错误响应集中在 `components.responses`。
 - `/actuator/*` 保留 Spring Boot Actuator 风格，是不包 `ApiResponse` 的例外。
-- Java 版通过 Spring Security 与 controller 注解表达认证、角色和接口说明；Go 版当前 OpenAPI 已声明 admin 接口的 `BearerAuth`，但 ADMIN 角色只写在 description 中，缺少机器可验证字段。
-- 本次以 Go test 固化团队 API policy，避免后续新增或修改接口时漏掉 operationId、tag、统一响应 envelope 或管理员角色声明。
+- Java 版通过 Spring Security 与 controller 注解表达认证、角色和接口说明；Go 版运行时管理员授权由 router 中的 `RequireRole("ADMIN")` middleware 执行。
+- Go 版 OpenAPI 需要用 `x-required-roles` 把管理员角色要求从自然语言 description 升级为机器可验证元数据；description 继续保留给人阅读，但 policy test 不只信任描述文本。
+- 本次以 Go test 固化团队 API policy，避免后续新增或修改接口时漏掉 operationId、tag、统一响应 envelope、管理员角色声明，或把 ADMIN 角色误标到非管理员接口。
 
 ## 2. 目标
 - 新增 `api/openapi/openapi_policy_test.go`，使用 `kin-openapi` 加载并验证 `api/openapi/eventhub.yaml`。
@@ -18,9 +19,10 @@
   - 除 `/actuator/*` 外，非 2xx 响应必须引用 `components.responses`，且被引用的组件响应必须统一使用 `ErrorResponse` schema。
   - `ErrorResponse` schema 本身必须在顶层复用 `ApiResponse` envelope，避免错误响应结构漂移。
   - `/api/v1/admin/**` 接口必须声明 `BearerAuth` security。
-  - `/api/v1/admin/**` 接口必须声明 `x-required-roles`，且包含 `ADMIN`。
+  - `/api/v1/admin/**` 接口必须声明 `x-required-roles: [ADMIN]`。
+  - 非 `/api/v1/admin/**` 接口不得声明 `ADMIN` 角色，除非后续业务设计明确需要并同步更新 policy。
   - 当前认证策略与 router 保持一致：`register/login/refresh` 不声明 `BearerAuth`，`logout/me/admin` 继续声明 `BearerAuth`。
-- 同步更新 `api/openapi/eventhub.yaml`，为当前 admin operation 增加 `x-required-roles: [ADMIN]`。
+- 核验并保留 `api/openapi/eventhub.yaml` 中当前 admin operation 的 `x-required-roles: [ADMIN]`。
 - 让 `go test ./...` 与 `make openapi-check` 通过。
 
 ## 3. 非目标
@@ -59,8 +61,9 @@
   - `ErrorResponse` 是错误响应的唯一 OpenAPI schema 入口；该 schema 继续通过顶层 `allOf` 复用 `ApiResponse`，保持 `code/message/data/requestId/timestamp` 结构一致。
   - 测试只检查业务接口实际引用到的组件响应，避免未使用组件影响当前接口门禁。
 - `AdminRolePolicy`
-  - `/api/v1/admin/**` operation 必须同时声明 `BearerAuth` 与 `x-required-roles: [ADMIN]`。
-  - `x-required-roles` 是 OpenAPI vendor extension，用于机器校验文档与 RBAC 中间件语义是否一致。
+  - `/api/v1/admin/**` operation 必须同时声明 `BearerAuth` 与精确的 `x-required-roles: [ADMIN]`。
+  - 非 `/api/v1/admin/**` operation 默认不得声明 `ADMIN`，避免把管理端权限要求误传播到公开接口或普通登录用户接口。
+  - `x-required-roles` 是 OpenAPI vendor extension，用于机器校验文档与 RBAC 中间件语义是否一致；真实授权仍以 middleware/service 为准。
 - 与 Java 版领域对象的对应关系：
   - Java 的 controller `@Operation/@Tag` 对应 Go OpenAPI operationId、summary/description 和 tags。
   - Java 的统一响应与分页 VO 对应 Go OpenAPI `ApiResponse`、`PageResponse`、`PageResponseUserInfo`。
@@ -104,7 +107,7 @@
   - YAML 语法或 OpenAPI 结构非法时，加载或 validate 直接失败。
   - 业务接口缺少 JSON 响应或 2xx JSON schema 未在最外层使用 `ApiResponse` envelope 时，policy test 失败。
   - 非 2xx 响应虽然引用了 `components.responses`，但组件响应内部没有统一指向 `ErrorResponse` 时，policy test 失败。
-  - admin operation 未声明 `x-required-roles` 或不包含 `ADMIN` 时，policy test 失败。
+  - admin operation 未声明 `x-required-roles`、不是精确 `[ADMIN]`，或非 admin operation 误声明 `ADMIN` 时，policy test 失败。
 - 状态流转：
   - 不涉及业务状态机。
 - handler / service / repository / sqlc/database 分工：
@@ -120,7 +123,8 @@
 ## 10. 权限与安全
 - 哪些角色能访问：
   - admin API 仍由运行时 `RequireRole("ADMIN")` 控制。
-  - OpenAPI spec 中用 `x-required-roles` 表达机器可验证的管理员角色需求。
+  - OpenAPI spec 中用 `x-required-roles: [ADMIN]` 表达机器可验证的管理员角色需求。
+  - `x-required-roles` 是文档和治理元数据，不参与运行时鉴权决策。
 - 鉴权与鉴别约束：
   - `register/login/refresh` 当前不经过 `AuthMiddleware`，OpenAPI 不声明 `BearerAuth`。
   - `logout` 当前经过 `AuthMiddleware`，OpenAPI 保留 `BearerAuth`。
@@ -147,8 +151,8 @@
   - 测试内调用 `doc.Validate(context.Background())`。
   - 最终运行 `make openapi-check`。
 - 异常场景验证：
-  - 先写测试并运行，预期在当前 spec 缺少 admin `x-required-roles` 时失败。
-  - 补充 spec 后重新运行目标测试与全量 `go test ./...`。
+  - 先写测试并运行，预期当前 helper 在 admin roles 不是精确 `[ADMIN]` 或非 admin 误标 `ADMIN` 时无法报错。
+  - 补充 policy helper 后重新运行目标测试与全量 `go test ./...`。
 - Java-Go parity 验证：
   - 检查 parity matrix 的 OpenAPI / Swagger 行是否索引本次 policy test。
 - 需要运行的命令：
@@ -160,7 +164,7 @@
 ## 12. 风险与替代方案
 - 当前方案的风险：
   - policy test 过严可能在后续新增特殊接口时需要显式例外；当前只保留 `/actuator/*` 例外，避免规则泛化过度。
-  - `x-required-roles` 是 vendor extension，生成代码不会直接使用它；它主要服务于契约审查和测试门禁。
+  - `x-required-roles` 是 vendor extension，生成代码不会直接使用它；它主要服务于契约审查、文档治理和测试门禁。
 - 备选方案：
   - 方案 A：只用 `make openapi-validate`，不新增 Go policy test。
   - 方案 B：引入 Spectral ruleset。

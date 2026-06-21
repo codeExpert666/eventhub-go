@@ -2,17 +2,20 @@
 
 ## 1. 本次改动解决了什么问题
 
-本次为 Go 版 EventHub 新增 OpenAPI policy 测试，把团队 API 规范从人工审查规则落到 `go test`：
+本实现说明记录 OpenAPI policy 测试的持续加固。本次在既有 Go test policy 基础上，把管理员角色声明从“包含 ADMIN”收紧为精确的 `x-required-roles: [ADMIN]`，并新增非管理员接口不得误标 ADMIN 的机器校验。
+
+当前 OpenAPI policy 把团队 API 规范从人工审查规则落到 `go test`：
 
 - operation 必须有 `operationId`、可读说明和 tag。
 - 业务接口必须声明 `application/json` 响应。
 - 业务接口 2xx JSON 响应必须在最外层直接引用 `ApiResponse`，或通过最外层 `allOf` 组合 `ApiResponse`。
 - 非 2xx 业务错误响应必须集中引用 `components.responses`，且被引用的组件响应必须统一使用 `ErrorResponse` schema。
 - `ErrorResponse` schema 自身必须顶层复用 `ApiResponse` envelope。
-- `/api/v1/admin/**` 必须声明 `BearerAuth` 与 `x-required-roles: [ADMIN]`。
+- `/api/v1/admin/**` 必须声明 `BearerAuth` 与精确的 `x-required-roles: [ADMIN]`。
+- 非 `/api/v1/admin/**` operation 不得声明 `ADMIN` 角色，除非后续业务设计明确需要并同步更新 policy。
 - 当前认证边界保持与 router 一致：`register/login/refresh` 无 `BearerAuth`，`logout/me` 有 `BearerAuth`。
 
-这解决了 admin 角色仅写在 description 中、后续无法机器校验的问题，也为后续新增接口提供防漂移门禁。
+这解决了 admin 角色只靠 description 或宽松包含检查表达时无法精确治理的问题，也为后续新增接口提供防漂移门禁。真实授权仍以 `internal/http/middleware.RequireRole("ADMIN")` 和服务端业务规则为准，`x-required-roles` 只作为 OpenAPI 文档和治理元数据。
 
 ## 2. 改动内容
 - 新增了什么
@@ -24,19 +27,21 @@
     - 通过 `errorResponseEnvelopeViolation` 校验 `ErrorResponse` 自身顶层复用 `ApiResponse`。
     - 新增 helper 单测覆盖直接 `$ref`、顶层 `allOf` 和嵌套属性误判场景。
     - 新增 helper 单测覆盖组件响应 schema 漂移和 `ErrorResponse` envelope 漂移。
+    - 本次新增 `TestAdminSecurityPolicyRequiresExactAdminRole`，防止 admin operation 被写成 `x-required-roles: [ADMIN, USER]` 仍然通过。
+    - 本次新增 `TestNonAdminOperationMustNotDeclareAdminRole`，防止非 admin operation 复制粘贴误标 `ADMIN`。
     - 失败信息包含 method、path、operationId。
   - 设计文档：`docs/ai/design/022-openapi-policy-test.md`。
   - 实现说明：`docs/ai/implementation/022-openapi-policy-test.md`。
 - 修改了什么
   - `api/openapi/eventhub.yaml`：
-    - `GET /api/v1/admin/users` 增加 `x-required-roles: [ADMIN]`。
-    - `PATCH /api/v1/admin/users/{userId}/status` 增加 `x-required-roles: [ADMIN]`。
+    - 当前 `GET /api/v1/admin/users` 和 `PATCH /api/v1/admin/users/{userId}/status` 已具备 `x-required-roles: [ADMIN]` 和稳定 `operationId`，本次核验后无 YAML 差异。
+    - 保留 description 中“需要 ADMIN 角色”的自然语言说明，但 policy test 只依赖结构化扩展字段判断权限元数据。
   - `docs/ai/design/022-openapi-policy-test.md`：
-    - 补充错误响应组件策略、`ErrorResponse` envelope 策略和对应测试策略。
+    - 补充 `x-required-roles` 的治理元数据边界、精确 `[ADMIN]` 规则和非 admin 防误标规则。
   - `go.mod` / `go.sum`：
     - 新增 `github.com/getkin/kin-openapi v0.131.0` 作为测试解析依赖，版本与 Makefile 的 `KIN_OPENAPI_VERSION` 一致。
   - `docs/ai/parity/java-go-parity-matrix.md`：
-    - OpenAPI / Swagger 行新增 `openapi_policy_test.go`、admin role vendor extension、错误响应组件统一性和 Go test policy 门禁索引。
+    - OpenAPI / Swagger 行补充 admin role vendor extension 的精确 `[ADMIN]` 校验和非 admin 防误标索引。
 - 删除了什么
   - 未删除文件。
 - 是否更新 Java-Go parity 记录
@@ -50,6 +55,8 @@
   - 错误响应先要求 operation 非 2xx 指向 `components.responses`，再要求被引用组件统一指向 `ErrorResponse`，避免只检查 `$ref` 前缀后把漂移风险转移到组件定义里。
   - `ErrorResponse` 自身继续通过顶层 `allOf` 复用 `ApiResponse`，让错误响应和成功响应共享 `code/message/data/requestId/timestamp` 外层结构。
   - admin 角色用 OpenAPI vendor extension `x-required-roles` 表达，保持和运行时 `RequireRole("ADMIN")` 同步，又不改变 generated server interface 或运行时逻辑。
+  - `adminSecurityPolicyViolation` 返回第一条结构化违规信息，方便单测构造坏 operation；`assertAdminSecurityPolicy` 只负责接入主 policy 的聚合输出。
+  - `adminRoleLeakViolation` 只阻止非 admin operation 声明 `ADMIN`，不提前禁止未来其他角色元数据，保留后续业务扩展空间。
   - auth security policy 用显式表记录当前事实，防止后续给 register/login/refresh 误加 BearerAuth，也防止误删 logout/me 的 BearerAuth。
 - 与 Go 项目当前阶段的匹配点
   - 本次只触碰 OpenAPI 契约、测试和文档，不进入 handler/service/repository/sqlc/database 分层。
@@ -86,8 +93,11 @@
   - GREEN：补充 `componentErrorResponseViolation` 并接入 `assertCentralizedErrorResponses` 后，同一命令通过。
   - RED：`go test ./api/openapi -run TestErrorResponseSchemaRequiresApiResponseEnvelope -count=1` 初始失败，暴露缺少 `ErrorResponse` 自身 envelope 校验 helper。
   - GREEN：补充 `errorResponseEnvelopeViolation` 并接入 `TestOpenAPIPolicy` 后，同一命令通过。
+  - RED：`go test ./api/openapi -run 'Test(AdminSecurityPolicyRequiresExactAdminRole|NonAdminOperationMustNotDeclareAdminRole)' -count=1` 在补 helper 前失败，报 `undefined: adminSecurityPolicyViolation` 和 `undefined: adminRoleLeakViolation`。
+  - GREEN：补充精确角色和非 admin 防误标 helper 后，同一命令通过。
   - `go test ./api/openapi -count=1`：通过。
   - `go test ./...`：通过。
+  - `go test ./... -count=1`：通过。
   - `go vet ./...`：通过。
   - `make lint`：通过，输出 `0 issues.`。
   - `make openapi-check`：通过，包含 validate、generate 和 generated file diff 检查。
@@ -96,6 +106,7 @@
   - `gofmt -w api/openapi/openapi_policy_test.go`：已运行。
   - `go test ./api/openapi -count=1`：已运行，通过。
   - `go test ./...`：已运行，通过。
+  - `go test ./... -count=1`：已运行，通过。
   - `go vet ./...`：已运行，通过。
   - `make lint`：已运行，通过。
   - `make openapi-check`：已运行，通过。
@@ -109,7 +120,7 @@
   - 对照 Java Springdoc/Spring Security 的 operation/tag 与管理员角色约束，在 Go spec-first 契约中用 policy test 和 `x-required-roles` 表达。
   - 已更新 parity matrix 的 OpenAPI / Swagger 行。
 - 结果如何
-  - policy test 能阻止后续漏掉 operationId、tag、业务 JSON 响应、最外层统一响应 envelope、错误响应集中引用、admin BearerAuth 和 ADMIN 角色声明。
+  - policy test 能阻止后续漏掉 operationId、tag、业务 JSON 响应、最外层统一响应 envelope、错误响应集中引用、admin BearerAuth、精确 ADMIN 角色声明，以及非 admin operation 误标 ADMIN。
 
 ## 6. 已知限制
 - 当前版本还缺什么

@@ -45,6 +45,8 @@ func TestOpenAPIPolicy(t *testing.T) {
 
 		if strings.HasPrefix(item.path, "/api/v1/admin/") {
 			assertAdminSecurityPolicy(t, item)
+		} else {
+			assertNonAdminRolePolicy(t, item)
 		}
 	}
 
@@ -190,6 +192,59 @@ func TestErrorResponseSchemaRequiresApiResponseEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(got, "must use ApiResponse as the top-level envelope") {
 		t.Fatalf("errorResponseEnvelopeViolation() = %q", got)
+	}
+}
+
+// TestAdminSecurityPolicyRequiresExactAdminRole 验证管理员接口角色声明必须精确。
+//
+// 仅检查“包含 ADMIN”会允许 `x-required-roles: [ADMIN, USER]` 之类漂移通过，
+// 文档读者和后续治理工具就无法判断真实授权边界是否仍然只有 ADMIN。
+func TestAdminSecurityPolicyRequiresExactAdminRole(t *testing.T) {
+	item := operationItem{
+		method: "GET",
+		path:   "/api/v1/admin/users",
+		operation: &openapi3.Operation{
+			OperationID: "listAdminUsers",
+			Security: &openapi3.SecurityRequirements{
+				openapi3.SecurityRequirement{"BearerAuth": []string{}},
+			},
+			Extensions: map[string]any{
+				"x-required-roles": []any{"ADMIN", "USER"},
+			},
+		},
+	}
+
+	got := adminSecurityPolicyViolation(item)
+	if got == "" {
+		t.Fatalf("adminSecurityPolicyViolation should reject admin operations whose roles are not exactly [ADMIN]")
+	}
+	if !strings.Contains(got, "x-required-roles must equal [ADMIN]") {
+		t.Fatalf("adminSecurityPolicyViolation() = %q", got)
+	}
+}
+
+// TestNonAdminOperationMustNotDeclareAdminRole 防止非管理端接口误标 ADMIN。
+//
+// ADMIN 角色是管理端边界，不应因为复制粘贴 OpenAPI operation 时把普通接口也标记为
+// 管理员接口；如果未来确有非 /api/v1/admin/** 的 ADMIN-only 能力，应先更新设计和 policy。
+func TestNonAdminOperationMustNotDeclareAdminRole(t *testing.T) {
+	item := operationItem{
+		method: "GET",
+		path:   "/api/v1/me",
+		operation: &openapi3.Operation{
+			OperationID: "getCurrentUser",
+			Extensions: map[string]any{
+				"x-required-roles": []any{"ADMIN"},
+			},
+		},
+	}
+
+	got := adminRoleLeakViolation(item)
+	if got == "" {
+		t.Fatalf("adminRoleLeakViolation should reject non-admin operations that declare ADMIN")
+	}
+	if !strings.Contains(got, "non-admin operation must not declare ADMIN") {
+		t.Fatalf("adminRoleLeakViolation() = %q", got)
 	}
 }
 
@@ -446,18 +501,49 @@ func errorResponseEnvelopeViolation(doc *openapi3.T) string {
 func assertAdminSecurityPolicy(t *testing.T, item operationItem) {
 	t.Helper()
 
+	if violation := adminSecurityPolicyViolation(item); violation != "" {
+		t.Errorf("%s", violation)
+	}
+}
+
+// adminSecurityPolicyViolation 返回管理员接口安全声明的第一条 policy 违规信息。
+//
+// 管理员接口必须同时声明 BearerAuth 和精确的 `x-required-roles: [ADMIN]`。
+// 这里刻意不接受额外角色，避免 OpenAPI 文档把真实运行时的 ADMIN-only 边界写宽。
+func adminSecurityPolicyViolation(item operationItem) string {
 	if !hasBearerAuth(item.operation) {
-		t.Errorf("%s must declare BearerAuth security", item.label())
+		return fmt.Sprintf("%s must declare BearerAuth security", item.label())
 	}
 
 	roles, ok := requiredRoles(item.operation)
 	if !ok {
-		t.Errorf("%s must declare x-required-roles as a string array", item.label())
-		return
+		return fmt.Sprintf("%s must declare x-required-roles as a string array", item.label())
 	}
-	if !contains(roles, "ADMIN") {
-		t.Errorf("%s x-required-roles must include ADMIN, got %v", item.label(), roles)
+	if len(roles) != 1 || roles[0] != "ADMIN" {
+		return fmt.Sprintf("%s x-required-roles must equal [ADMIN], got %v", item.label(), roles)
 	}
+	return ""
+}
+
+// assertNonAdminRolePolicy 防止普通业务接口误声明 ADMIN 角色。
+func assertNonAdminRolePolicy(t *testing.T, item operationItem) {
+	t.Helper()
+
+	if violation := adminRoleLeakViolation(item); violation != "" {
+		t.Errorf("%s", violation)
+	}
+}
+
+// adminRoleLeakViolation 返回非管理员接口误声明 ADMIN 的 policy 违规信息。
+func adminRoleLeakViolation(item operationItem) string {
+	roles, ok := requiredRoles(item.operation)
+	if !ok {
+		return ""
+	}
+	if contains(roles, "ADMIN") {
+		return fmt.Sprintf("%s non-admin operation must not declare ADMIN in x-required-roles, got %v", item.label(), roles)
+	}
+	return ""
 }
 
 // assertAuthSecurityPolicy 单独固定认证相关公开/受保护接口的安全策略。
