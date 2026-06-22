@@ -26,12 +26,12 @@ jobs:
     steps:
       # 每个 job 独立运行；Checkout 默认检出触发本次 workflow 的 commit/ref 对应代码。
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 从 go.mod 读取 Go 版本并配置到 PATH，供后续 go/make 命令使用。
       # 启用 Go modules 缓存与构建缓存，加速重复 CI 运行。
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -48,10 +48,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -69,7 +69,7 @@ jobs:
     # GitHub 托管的 Ubuntu runner 已预装 Docker/Compose，可直接运行 docker 命令。
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 解析并校验 Compose 配置；--quiet 只用退出码表达结果，不打印解析后的完整配置。
       - name: Check Docker Compose config
