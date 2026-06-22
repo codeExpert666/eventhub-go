@@ -510,10 +510,10 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	}
 	systemService := systemsvc.NewService(config.Config{AppName: "eventhub-backend", Env: config.EnvTest, Version: "test"}, clock.RealClock{})
 	router := apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
-		System:         systemhandler.NewHandler(systemService),
-		Auth:           authhandler.NewHandler(authService),
-		User:           userhandler.NewHandler(userService),
-		AuthMiddleware: middleware.NewAuth(codec, userService),
+		System:       systemhandler.NewHandler(systemService),
+		Auth:         authhandler.NewHandler(authService),
+		User:         userhandler.NewHandler(userService),
+		Authenticate: middleware.Authenticate(codec, userService),
 	})
 	return router, store
 }

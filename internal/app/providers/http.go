@@ -20,11 +20,11 @@ func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user 
 		openAPI = openapihandler.NewOpenAPIHandler()
 	}
 	routerDeps := apphttp.RouterDependencies{
-		System:         system.Handler,
-		Auth:           auth.Handler,
-		User:           user.Handler,
-		OpenAPI:        openAPI,
-		AuthMiddleware: auth.Middleware,
+		System:       system.Handler,
+		Auth:         auth.Handler,
+		User:         user.Handler,
+		OpenAPI:      openAPI,
+		Authenticate: auth.Authenticate,
 	}
 	router := apphttp.NewRouter(platform.Logger, routerDeps)
 	return HTTPDeps{

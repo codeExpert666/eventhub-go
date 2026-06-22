@@ -8,17 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"eventhub-go/internal/apperror"
+	"eventhub-go/internal/repository"
 	"eventhub-go/internal/security"
 	"eventhub-go/internal/security/jwt"
+	usersvc "eventhub-go/internal/service/user"
 )
 
 const testSigningSecret = "eventhub-test-access-token-secret-for-auth-tests"
 
 func TestAuthMiddlewareRejectsMissingToken(t *testing.T) {
 	codec := newTestJWTCodec(t)
-	loader := &testPrincipalLoader{}
-	handler := NewAuth(codec, loader).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	users := newTestUserService(repository.User{ID: 1001, Username: "alice", Status: repository.UserStatusEnabled}, []string{"USER"})
+	handler := Authenticate(codec, users)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
 
@@ -34,14 +35,13 @@ func TestAuthMiddlewareStoresPrincipalInContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
-	loader := &testPrincipalLoader{
-		principal: security.Principal{
-			UserID:      1001,
-			Username:    "alice",
-			Authorities: []string{"ROLE_USER"},
-		},
+	userRepo := &testUserRepository{
+		user:  repository.User{ID: 1001, Username: "alice", Status: repository.UserStatusEnabled},
+		found: true,
 	}
-	handler := NewAuth(codec, loader).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	roleRepo := &testRoleRepository{roles: []string{"USER"}}
+	users := usersvc.NewService(userRepo, roleRepo, nil)
+	handler := Authenticate(codec, users)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := security.PrincipalFromContext(r.Context())
 		if !ok {
 			t.Fatal("expected principal in context")
@@ -60,8 +60,8 @@ func TestAuthMiddlewareStoresPrincipalInContext(t *testing.T) {
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("unexpected status: %d", recorder.Code)
 	}
-	if loader.loadedUserID != 1001 {
-		t.Fatalf("expected loader to use sub user id, got %d", loader.loadedUserID)
+	if userRepo.loadedUserID != 1001 {
+		t.Fatalf("expected user service to use sub user id, got %d", userRepo.loadedUserID)
 	}
 }
 
@@ -71,10 +71,8 @@ func TestAuthMiddlewareRejectsDisabledUserOldToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
-	loader := &testPrincipalLoader{
-		err: apperror.New(apperror.AuthUnauthorized, "请先登录或重新登录"),
-	}
-	handler := NewAuth(codec, loader).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	users := newTestUserService(repository.User{ID: 1001, Username: "alice", Status: repository.UserStatusDisabled}, []string{"USER"})
+	handler := Authenticate(codec, users)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
 
@@ -92,7 +90,8 @@ func TestAuthMiddlewareRejectsExpiredToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
-	handler := NewAuth(codec, &testPrincipalLoader{}).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	users := newTestUserService(repository.User{ID: 1001, Username: "alice", Status: repository.UserStatusEnabled}, []string{"USER"})
+	handler := Authenticate(codec, users)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
 	}))
 
@@ -113,18 +112,71 @@ func newTestJWTCodec(t *testing.T) *jwt.Codec {
 	return codec
 }
 
-type testPrincipalLoader struct {
-	principal    security.Principal
-	loadedUserID int64
-	err          error
+func newTestUserService(user repository.User, roles []string) *usersvc.Service {
+	return usersvc.NewService(
+		&testUserRepository{user: user, found: true},
+		&testRoleRepository{roles: roles},
+		nil,
+	)
 }
 
-func (l *testPrincipalLoader) LoadPrincipal(ctx context.Context, userID int64) (security.Principal, error) {
-	l.loadedUserID = userID
-	if l.err != nil {
-		return security.Principal{}, l.err
-	}
-	return l.principal, nil
+type testUserRepository struct {
+	user         repository.User
+	found        bool
+	loadedUserID int64
+}
+
+func (r *testUserRepository) ExistsByUsername(ctx context.Context, username string) (bool, error) {
+	return false, nil
+}
+
+func (r *testUserRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+	return false, nil
+}
+
+func (r *testUserRepository) Create(ctx context.Context, input repository.CreateUserInput) (repository.User, error) {
+	return repository.User{}, nil
+}
+
+func (r *testUserRepository) FindByUsernameOrEmail(ctx context.Context, usernameOrEmail string) (repository.User, bool, error) {
+	return repository.User{}, false, nil
+}
+
+func (r *testUserRepository) FindByID(ctx context.Context, id int64) (repository.User, bool, error) {
+	r.loadedUserID = id
+	return r.user, r.found, nil
+}
+
+func (r *testUserRepository) CountByCriteria(ctx context.Context, criteria repository.UserCriteria) (int64, error) {
+	return 0, nil
+}
+
+func (r *testUserRepository) ListUsers(ctx context.Context, criteria repository.UserCriteria, limit int32, offset int32) ([]repository.User, error) {
+	return nil, nil
+}
+
+func (r *testUserRepository) UpdateStatus(ctx context.Context, id int64, status repository.UserStatus) (int64, error) {
+	return 0, nil
+}
+
+type testRoleRepository struct {
+	roles []string
+}
+
+func (r *testRoleRepository) FindByCode(ctx context.Context, code string) (repository.Role, bool, error) {
+	return repository.Role{}, false, nil
+}
+
+func (r *testRoleRepository) FindRoleCodesByUserID(ctx context.Context, userID int64) ([]string, error) {
+	return r.roles, nil
+}
+
+func (r *testRoleRepository) FindRoleCodesByUserIDs(ctx context.Context, userIDs []int64) ([]repository.UserRoleCode, error) {
+	return nil, nil
+}
+
+func (r *testRoleRepository) AddRoleToUser(ctx context.Context, userID, roleID int64) (int64, error) {
+	return 0, nil
 }
 
 func assertAPIError(t *testing.T, recorder *httptest.ResponseRecorder, status int, code string) {

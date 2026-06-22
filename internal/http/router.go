@@ -17,11 +17,11 @@ import (
 
 // RouterDependencies 是 router 注册路由所需的显式依赖。
 type RouterDependencies struct {
-	System         *systemhandler.Handler
-	Auth           *authhandler.Handler
-	User           *userhandler.Handler
-	OpenAPI        *openapihandler.OpenAPIHandler
-	AuthMiddleware *middleware.AuthMiddleware
+	System       *systemhandler.Handler
+	Auth         *authhandler.Handler
+	User         *userhandler.Handler
+	OpenAPI      *openapihandler.OpenAPIHandler
+	Authenticate func(http.Handler) http.Handler
 }
 
 // NewRouter 组装应用的 HTTP 路由树，并返回可直接挂载到 http.Server 的 Handler。
@@ -64,9 +64,10 @@ func NewRouter(logger *slog.Logger, deps RouterDependencies) http.Handler {
 		router.Post("/api/v1/auth/login", deps.Auth.Login)
 		router.Post("/api/v1/auth/refresh", deps.Auth.Refresh)
 	}
-	if deps.AuthMiddleware != nil {
+
+	if deps.Authenticate != nil {
 		router.Group(func(protected chi.Router) {
-			protected.Use(deps.AuthMiddleware.Middleware)
+			protected.Use(deps.Authenticate)
 			if deps.Auth != nil {
 				protected.Post("/api/v1/auth/logout", deps.Auth.Logout)
 			}

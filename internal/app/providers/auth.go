@@ -2,6 +2,7 @@ package providers
 
 import (
 	"errors"
+	"net/http"
 
 	authhandler "eventhub-go/internal/http/handler/auth"
 	"eventhub-go/internal/http/middleware"
@@ -15,9 +16,9 @@ import (
 
 // AuthDeps 聚合 auth 模块装配结果。
 type AuthDeps struct {
-	Service    *authsvc.Service
-	Handler    *authhandler.Handler
-	Middleware *middleware.AuthMiddleware
+	Service      *authsvc.Service
+	Handler      *authhandler.Handler
+	Authenticate func(http.Handler) http.Handler
 }
 
 // ProviderAuth 在数据库可用时创建 auth service、handler 和 middleware。
@@ -59,8 +60,8 @@ func ProviderAuth(platform PlatformDeps, user UserDeps) (AuthDeps, error) {
 	}
 
 	return AuthDeps{
-		Service:    authService,
-		Handler:    authhandler.NewHandler(authService),
-		Middleware: middleware.NewAuth(jwtCodec, user.Service),
+		Service:      authService,
+		Handler:      authhandler.NewHandler(authService),
+		Authenticate: middleware.Authenticate(jwtCodec, user.Service),
 	}, nil
 }
