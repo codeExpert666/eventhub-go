@@ -508,7 +508,7 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
-	systemService := systemsvc.NewService(config.Config{AppName: "eventhub-backend", Version: "test"}, clock.RealClock{})
+	systemService := systemsvc.NewService(config.Config{AppName: "eventhub-backend", Env: config.EnvTest, Version: "test"}, clock.RealClock{})
 	router := apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
 		System:         systemhandler.NewHandler(systemService),
 		Auth:           authhandler.NewHandler(authService),
