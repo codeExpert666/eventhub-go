@@ -39,7 +39,10 @@ func Bootstrap(ctx context.Context) (_ *Application, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("provide auth dependencies: %w", err)
 	}
-	httpDeps := providers.ProviderHTTP(platform, system, auth, user)
+	httpDeps, err := providers.ProviderHTTP(platform, system, auth, user)
+	if err != nil {
+		return nil, fmt.Errorf("provide http dependencies: %w", err)
+	}
 
 	return NewApplication(platform.Logger, httpDeps.Server, platform.Database, platform.Redis), nil
 }

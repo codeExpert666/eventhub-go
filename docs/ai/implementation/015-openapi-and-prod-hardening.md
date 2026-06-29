@@ -20,7 +20,7 @@
     - `docs/ai/adr/0019-prod-disable-api-docs.md`
   - OpenAPI 契约：
     - `api/openapi/eventhub.yaml`
-    - `api/openapi/spec.go`
+    - `api/openapi/spec.go`（当时文件名；后续本地静态资源重构已更名为 `api/openapi/assets.go`）
   - OpenAPI 生成代码：
     - `api/openapi/gen/eventhub.gen.go`
   - 文档 handler：
@@ -56,7 +56,7 @@
 - 关键设计原因
   - Java Springdoc 依赖 Spring MVC 注解和 Bean Validation 元数据；Go 端没有等价的低成本注解扫描机制，因此选择 spec-first。
   - `api/openapi/eventhub.yaml` 作为唯一契约源，便于联调、审查、validate、generate 和 parity matrix 索引。
-  - `api/openapi/spec.go` 通过 Go embed 暴露同一个 YAML，避免 handler 运行时依赖工作目录读取文件。
+  - 当时的 `api/openapi/spec.go` 通过 Go embed 暴露同一个 YAML，避免 handler 运行时依赖工作目录读取文件；后续本地静态资源重构已更名并收敛为 `api/openapi/assets.go` 路径常量。
   - `oapi-codegen` 生成 types/server interface，但当前不强制改造现有 handler，避免把文档入口任务扩大成 router 重构。
   - 文档 handler 位于 `internal/http/handler/openapi/handler.go`，属于跨业务 HTTP 文档入口；它进入 openapi 能力子包而不是 handler 根目录或 auth/user/system 业务子包，也不访问 service 或 repository。
   - `EchoRequest` schema 显式声明 `message maxLength=64`、`tag maxLength=32`，对齐现有 system handler 的运行时校验，避免生成客户端误认为超长字段合法。

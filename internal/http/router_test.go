@@ -7,11 +7,14 @@ import (
 	"log/slog"
 	nethttp "net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 
+	openapispec "eventhub-go/api/openapi"
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
 	openapihandler "eventhub-go/internal/http/handler/openapi"
@@ -218,8 +221,55 @@ func TestOpenAPIEndpointsAreAvailableWhenEnabled(t *testing.T) {
 		t.Fatalf("unexpected swagger content type: %s", contentType)
 	}
 	if body := swagger.Body.String(); !strings.Contains(body, "SwaggerUIBundle") ||
-		!strings.Contains(body, "/openapi.yaml") {
+		!strings.Contains(body, "/openapi.yaml") ||
+		!strings.Contains(body, "/swagger/swagger-ui.css") ||
+		!strings.Contains(body, "/swagger/swagger-ui-bundle.js") {
 		t.Fatalf("unexpected swagger body: %s", body)
+	}
+	assertNoExternalSwaggerCDN(t, swagger.Body.String())
+}
+
+func TestOpenAPIEndpointsServeLocalStaticAssetsWhenEnabled(t *testing.T) {
+	root := writeOpenAPITestAssets(t)
+	router := testRouterWithOpenAPIAssets(root)
+
+	spec := performRequest(router, nethttp.MethodGet, "/openapi.yaml", nil, nil)
+	if spec.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected openapi status: %d body=%s", spec.Code, spec.Body.String())
+	}
+	if got := spec.Body.String(); got != testOpenAPIYAML {
+		t.Fatalf("expected local openapi.yaml body, got %q", got)
+	}
+
+	swagger := performRequest(router, nethttp.MethodGet, "/swagger/", nil, nil)
+	if swagger.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected swagger status: %d body=%s", swagger.Code, swagger.Body.String())
+	}
+	if got := swagger.Body.String(); got != testSwaggerHTML {
+		t.Fatalf("expected local swagger html body, got %q", got)
+	}
+	assertNoExternalSwaggerCDN(t, swagger.Body.String())
+
+	css := performRequest(router, nethttp.MethodGet, "/swagger/swagger-ui.css", nil, nil)
+	if css.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected swagger css status: %d body=%s", css.Code, css.Body.String())
+	}
+	if contentType := css.Header().Get("Content-Type"); !strings.Contains(contentType, "text/css") {
+		t.Fatalf("unexpected swagger css content type: %s", contentType)
+	}
+	if got := css.Body.String(); got != testSwaggerCSS {
+		t.Fatalf("expected local swagger css body, got %q", got)
+	}
+
+	js := performRequest(router, nethttp.MethodGet, "/swagger/swagger-ui-bundle.js", nil, nil)
+	if js.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected swagger js status: %d body=%s", js.Code, js.Body.String())
+	}
+	if contentType := js.Header().Get("Content-Type"); !strings.Contains(contentType, "javascript") {
+		t.Fatalf("unexpected swagger js content type: %s", contentType)
+	}
+	if got := js.Body.String(); got != testSwaggerJS {
+		t.Fatalf("expected local swagger js body, got %q", got)
 	}
 }
 
@@ -234,12 +284,19 @@ func TestOpenAPIEndpointsAreNotRegisteredWhenDisabled(t *testing.T) {
 		t.Fatalf("unexpected openapi body: %#v", body)
 	}
 
-	swagger := performRequest(router, nethttp.MethodGet, "/swagger/index.html", nil, nil)
-	if swagger.Code != nethttp.StatusNotFound {
-		t.Fatalf("unexpected swagger status: %d body=%s", swagger.Code, swagger.Body.String())
-	}
-	if body := decodeAPIResponse(t, swagger); body["code"] != "COMMON-404" {
-		t.Fatalf("unexpected swagger body: %#v", body)
+	for _, path := range []string{
+		"/swagger/",
+		"/swagger/index.html",
+		"/swagger/swagger-ui.css",
+		"/swagger/swagger-ui-bundle.js",
+	} {
+		swagger := performRequest(router, nethttp.MethodGet, path, nil, nil)
+		if swagger.Code != nethttp.StatusNotFound {
+			t.Fatalf("unexpected swagger status for %s: %d body=%s", path, swagger.Code, swagger.Body.String())
+		}
+		if body := decodeAPIResponse(t, swagger); body["code"] != "COMMON-404" {
+			t.Fatalf("unexpected swagger body for %s: %#v", path, body)
+		}
 	}
 }
 
@@ -341,6 +398,30 @@ func testRouter() nethttp.Handler {
 }
 
 func testRouterWithOpenAPI(enabled bool) nethttp.Handler {
+	var openAPI *openapihandler.OpenAPIHandler
+	if enabled {
+		var err error
+		openAPI, err = openapihandler.NewOpenAPIHandler(repoOpenAPIAssetRoot())
+		if err != nil {
+			panic(err)
+		}
+	}
+	return testRouterWithOpenAPIHandler(openAPI)
+}
+
+func testRouterWithOpenAPIAssets(assetRoot string) nethttp.Handler {
+	openAPI, err := openapihandler.NewOpenAPIHandler(assetRoot)
+	if err != nil {
+		panic(err)
+	}
+	return testRouterWithOpenAPIHandler(openAPI)
+}
+
+func repoOpenAPIAssetRoot() string {
+	return filepath.Join("..", "..", filepath.FromSlash(openapispec.AssetRoot))
+}
+
+func testRouterWithOpenAPIHandler(openAPI *openapihandler.OpenAPIHandler) nethttp.Handler {
 	cfg := config.Config{
 		AppName: "eventhub-backend",
 		Env:     config.EnvTest,
@@ -348,10 +429,6 @@ func testRouterWithOpenAPI(enabled bool) nethttp.Handler {
 		Log:     config.LogConfig{Level: slog.LevelError},
 	}
 	systemService := systemsvc.NewService(cfg, clock.RealClock{})
-	var openAPI *openapihandler.OpenAPIHandler
-	if enabled {
-		openAPI = openapihandler.NewOpenAPIHandler()
-	}
 	return apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
 		System:  systemhandler.NewHandler(systemService),
 		OpenAPI: openAPI,
@@ -390,4 +467,42 @@ func decodeAPIResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[st
 		t.Fatal("expected timestamp")
 	}
 	return body
+}
+
+const (
+	testOpenAPIYAML = "openapi: 3.0.3\ninfo:\n  title: Local Test API\n  version: test\n"
+	testSwaggerHTML = "<!doctype html><title>Local Test Swagger UI</title><div id=\"swagger-ui\"></div>\n"
+	testSwaggerCSS  = ".swagger-ui { color: #111; }\n"
+	testSwaggerJS   = "window.SwaggerUIBundle = function () {};\n"
+)
+
+func writeOpenAPITestAssets(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	swaggerDir := filepath.Join(root, filepath.FromSlash(openapispec.SwaggerDirPath))
+	if err := os.MkdirAll(swaggerDir, 0o755); err != nil {
+		t.Fatalf("create swagger asset dir: %v", err)
+	}
+	writeTestFile(t, filepath.Join(root, filepath.FromSlash(openapispec.SpecPath)), testOpenAPIYAML)
+	writeTestFile(t, filepath.Join(root, filepath.FromSlash(openapispec.SwaggerIndexPath)), testSwaggerHTML)
+	writeTestFile(t, filepath.Join(root, filepath.FromSlash(openapispec.SwaggerCSSPath)), testSwaggerCSS)
+	writeTestFile(t, filepath.Join(root, filepath.FromSlash(openapispec.SwaggerBundlePath)), testSwaggerJS)
+	return root
+}
+
+func writeTestFile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func assertNoExternalSwaggerCDN(t *testing.T, body string) {
+	t.Helper()
+	for _, forbidden := range []string{"https://cdn", "unpkg", "jsdelivr"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("swagger ui html must not reference external CDN %q: %s", forbidden, body)
+		}
+	}
 }

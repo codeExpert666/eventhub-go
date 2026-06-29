@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"fmt"
 	"net/http"
 
 	apphttp "eventhub-go/internal/http"
@@ -14,10 +15,14 @@ type HTTPDeps struct {
 }
 
 // ProviderHTTP 创建应用 router 和 HTTP server。
-func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user UserDeps) HTTPDeps {
+func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user UserDeps) (HTTPDeps, error) {
 	var openAPI *openapihandler.OpenAPIHandler
 	if platform.Config.OpenAPI.Enabled {
-		openAPI = openapihandler.NewOpenAPIHandler()
+		var err error
+		openAPI, err = openapihandler.NewOpenAPIHandler(platform.Config.OpenAPI.AssetRoot)
+		if err != nil {
+			return HTTPDeps{}, fmt.Errorf("initialize openapi handler: %w", err)
+		}
 	}
 	routerDeps := apphttp.RouterDependencies{
 		System:       system.Handler,
@@ -30,5 +35,5 @@ func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user 
 	return HTTPDeps{
 		Router: router,
 		Server: apphttp.NewServer(platform.Config, platform.Logger, router),
-	}
+	}, nil
 }

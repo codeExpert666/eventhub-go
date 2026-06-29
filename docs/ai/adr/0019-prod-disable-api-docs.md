@@ -18,12 +18,16 @@ Go 版选择：
 - `EVENTHUB_ENV=dev` 和 `EVENTHUB_ENV=test` 时，`OPENAPI_ENABLED` 未配置默认 `true`。
 - `EVENTHUB_ENV=prod` 时，`OPENAPI_ENABLED` 未配置默认 `false`。
 - `OPENAPI_ENABLED` 显式配置时覆盖环境默认值。
+- 新增 `OPENAPI_ASSET_ROOT` 环境变量，声明文档入口启用后读取 `eventhub.yaml` 与 Swagger UI 静态资源的本地根目录；未配置时默认 `api/openapi`。
 - `ProviderHTTP` 根据 `platform.Config.OpenAPI.Enabled` 决定是否创建 `OpenAPIHandler`。
+- `ProviderHTTP` 创建 `OpenAPIHandler` 时显式传入 `platform.Config.OpenAPI.AssetRoot`，handler 不再从工作目录或可执行文件目录自动搜索资源根目录。
+- `OPENAPI_ENABLED=true` 时，`OpenAPIHandler` 构造阶段校验 `OPENAPI_ASSET_ROOT` 下的 `eventhub.yaml` 与 Swagger UI HTML/CSS/JS 必须存在；资源缺失时 HTTP provider 返回启动错误。
 - `NewRouter` 只在存在 `OpenAPIHandler` 时注册：
   - `GET /openapi.yaml`
   - `GET /swagger`
   - `GET /swagger/`
   - `GET /swagger/*`
+- 文档入口启用时，`/openapi.yaml` 和 Swagger UI HTML/CSS/JS 均来自 `OPENAPI_ASSET_ROOT` 指向的本地静态资源目录，不依赖外部 CDN、Go embed、Go 字符串常量或 handler 自动路径搜索。
 - prod 默认关闭时，文档路径不注册，请求落入统一 `COMMON-404`。
 - prod 默认关闭不受管理员 token 影响；文档资源不存在，而不是认证后可见。
 
@@ -49,10 +53,12 @@ Go 版选择：
   - 管理员 token 不能绕过默认关闭策略。
   - router 行为简单：启用才注册，禁用即 `COMMON-404`。
   - dev/test 默认联调体验不受影响。
+  - OpenAPI 静态资源目录是显式配置项，容器和企业部署可以固定为 `/app/api/openapi` 这类确定路径。
+  - 显式开启文档入口时资源缺失会在启动期暴露，避免首次访问 `/swagger/` 时才发现配置错误。
 - 代价
   - Go prod 未认证访问文档路径返回 `COMMON-404`，而 Java 在未认证且路径受 Spring Security 管控时可能先返回 `AUTH-401`；这是框架结构差异，安全目标保持一致。
   - 如果生产确实需要查看文档，必须显式打开开关或使用非生产环境副本。
-  - Swagger UI HTML 使用外部 CDN 资源，受网络策略影响；但 prod 默认关闭，不增加生产运行依赖。
+  - 显式开启文档入口的部署产物需要携带 `api/openapi/eventhub.yaml` 和 `api/openapi/swagger/` 本地静态资源，并确保 `OPENAPI_ASSET_ROOT` 指向正确目录；相对路径按进程当前工作目录解析。
 - 后续可能需要调整的地方
   - 如果需要生产临时文档，应补充内网限制、认证、审计和短期自动关闭策略。
   - 如部署到网关后，可在网关层额外屏蔽 `/openapi.yaml` 和 `/swagger/*`。

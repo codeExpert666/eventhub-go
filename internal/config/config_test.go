@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	openapispec "eventhub-go/api/openapi"
+)
 
 func TestLoadOpenAPIDefaultsByEnv(t *testing.T) {
 	tests := []struct {
@@ -23,6 +27,9 @@ func TestLoadOpenAPIDefaultsByEnv(t *testing.T) {
 
 			if cfg.OpenAPI.Enabled != tt.enabled {
 				t.Fatalf("OpenAPI enabled: got %t want %t", cfg.OpenAPI.Enabled, tt.enabled)
+			}
+			if cfg.OpenAPI.AssetRoot != openapispec.AssetRoot {
+				t.Fatalf("OpenAPI asset root: got %q want %q", cfg.OpenAPI.AssetRoot, openapispec.AssetRoot)
 			}
 		})
 	}
@@ -49,6 +56,29 @@ func TestLoadOpenAPIEnabledCanBeOverridden(t *testing.T) {
 
 			if cfg.OpenAPI.Enabled != tt.enabled {
 				t.Fatalf("OpenAPI enabled: got %t want %t", cfg.OpenAPI.Enabled, tt.enabled)
+			}
+		})
+	}
+}
+
+func TestLoadOpenAPIAssetRootCanBeOverridden(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "custom absolute path", env: "/app/api/openapi", want: "/app/api/openapi"},
+		{name: "blank value falls back to default", env: "   ", want: openapispec.AssetRoot},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENAPI_ASSET_ROOT", tt.env)
+
+			cfg := Load()
+
+			if cfg.OpenAPI.AssetRoot != tt.want {
+				t.Fatalf("OpenAPI asset root: got %q want %q", cfg.OpenAPI.AssetRoot, tt.want)
 			}
 		})
 	}

@@ -21,7 +21,7 @@ Go 版 `Dockerfile` 使用多阶段构建：
 - runtime stage 使用固定 Alpine 镜像 `alpine:3.21`。
 - runtime stage 只安装 `ca-certificates` 和 `tzdata`，并使用 Alpine 自带的轻量 `wget` 作为 healthcheck 工具。
 - runtime stage 不包含 Go 编译器、源码、module cache、测试工具或 sqlc/openapi/migrate 生成工具。
-- runtime 容器默认 `EVENTHUB_ENV=prod` 且 `OPENAPI_ENABLED=false`。
+- runtime 容器默认 `EVENTHUB_ENV=prod`、`OPENAPI_ENABLED=false` 且 `OPENAPI_ASSET_ROOT=/app/api/openapi`。
 - runtime 容器使用非 root 用户运行应用。
 
 ## 备选方案
@@ -50,7 +50,7 @@ Go 版 `Dockerfile` 使用多阶段构建：
   - 镜像职责更清晰，构建期和运行期依赖分离。
   - 运行镜像不携带 Go 编译工具链。
   - Compose healthcheck 可以直接使用现有 `/actuator/health`。
-  - prod 默认不暴露 Swagger/OpenAPI。
+  - prod 默认不暴露 Swagger/OpenAPI；显式开启时静态资源目录也有确定的容器内路径。
 - 代价
   - Alpine 比 `scratch` / distroless 多一些运行时组件。
   - 需要维护 Alpine 与 Go builder 镜像版本。

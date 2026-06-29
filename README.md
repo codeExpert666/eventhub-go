@@ -166,7 +166,9 @@ make compose-down
 
 - `EVENTHUB_ENV=dev/test` 时，`OPENAPI_ENABLED` 默认开启。
 - `EVENTHUB_ENV=prod` 时，`OPENAPI_ENABLED` 默认关闭。
-- Dockerfile runtime 默认 `EVENTHUB_ENV=prod` 且 `OPENAPI_ENABLED=false`。
+- `OPENAPI_ASSET_ROOT` 指向 OpenAPI YAML 与 Swagger UI 本地静态资源根目录；本地默认填相对路径 `api/openapi`，这适用于从仓库根目录启动（相对路径按进程当前工作目录解析），容器默认填绝对路径 `/app/api/openapi`。
+- `OPENAPI_ENABLED=true` 时会在启动期校验 `OPENAPI_ASSET_ROOT` 下的 `eventhub.yaml` 和 Swagger UI HTML/CSS/JS 是否存在；资源缺失会启动失败，禁用时不校验也不注册文档路由。
+- Dockerfile runtime 默认 `EVENTHUB_ENV=prod`、`OPENAPI_ENABLED=false` 且 `OPENAPI_ASSET_ROOT=/app/api/openapi`。
 - 生产环境必须显式注入 `EVENTHUB_ACCESS_TOKEN_SIGNING_SECRET` 和真实数据库/Redis 凭据。
 
 ## 目录结构

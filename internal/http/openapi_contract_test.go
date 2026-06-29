@@ -5,6 +5,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -80,20 +82,38 @@ func TestOpenAPIResponseContractsValidateRealRouterResponses(t *testing.T) {
 func loadOpenAPIResponseContractRouter(t *testing.T) routers.Router {
 	t.Helper()
 
-	loader := openapi3.NewLoader()
-	doc, err := loader.LoadFromData(openapispec.SpecYAML())
-	if err != nil {
-		t.Fatalf("load api/openapi/eventhub.yaml: %v", err)
-	}
-	if err := doc.Validate(context.Background()); err != nil {
-		t.Fatalf("validate api/openapi/eventhub.yaml: %v", err)
-	}
-
+	doc := loadOpenAPIResponseContractDocument(t)
 	router, err := legacyrouter.NewRouter(doc)
 	if err != nil {
 		t.Fatalf("create OpenAPI response contract router: %v", err)
 	}
 	return router
+}
+
+func loadOpenAPIResponseContractDocument(t *testing.T) *openapi3.T {
+	t.Helper()
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate OpenAPI response contract test file")
+	}
+	specPath := filepath.Join(
+		filepath.Dir(currentFile),
+		"..",
+		"..",
+		filepath.FromSlash(openapispec.AssetRoot),
+		filepath.FromSlash(openapispec.SpecPath),
+	)
+
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromFile(specPath)
+	if err != nil {
+		t.Fatalf("load %s: %v", specPath, err)
+	}
+	if err := doc.Validate(context.Background()); err != nil {
+		t.Fatalf("validate %s: %v", specPath, err)
+	}
+	return doc
 }
 
 func newOpenAPIContractRequest(t *testing.T, method, path string, body []byte, headers map[string]string) *http.Request {

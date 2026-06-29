@@ -19,6 +19,7 @@ func TestRunWrapsHTTPServerErrors(t *testing.T) {
 	}
 	t.Setenv("EVENTHUB_HTTP_PORT", port)
 	t.Setenv("EVENTHUB_MYSQL_DSN", "")
+	t.Setenv("OPENAPI_ENABLED", "false")
 
 	err = Run()
 	if err == nil {

@@ -56,7 +56,8 @@ func NewRouter(logger *slog.Logger, deps RouterDependencies) http.Handler {
 		router.Get("/openapi.yaml", deps.OpenAPI.YAML)
 		router.Get("/swagger", deps.OpenAPI.RedirectSwagger)
 		router.Get("/swagger/", deps.OpenAPI.SwaggerUI)
-		router.Get("/swagger/*", deps.OpenAPI.SwaggerUI)
+		router.Get("/swagger/index.html", deps.OpenAPI.SwaggerUI)
+		router.Get("/swagger/*", deps.OpenAPI.SwaggerAsset)
 	}
 
 	if deps.Auth != nil {

@@ -22,13 +22,16 @@ RUN apk add --no-cache ca-certificates tzdata \
 
 WORKDIR /app
 
-# 仅从构建阶段复制已编译好的服务二进制文件。
+# 仅从构建阶段复制已编译好的服务二进制文件和可选 OpenAPI 本地静态资源。
 COPY --from=build /out/eventhub /app/eventhub
+COPY --from=build /workspace/api/openapi/eventhub.yaml /app/api/openapi/eventhub.yaml
+COPY --from=build /workspace/api/openapi/swagger /app/api/openapi/swagger
 
 # 默认运行配置；部署环境可通过容器环境变量覆盖这些值。
 ENV EVENTHUB_ENV=prod \
 	EVENTHUB_HTTP_PORT=8080 \
-	OPENAPI_ENABLED=false
+	OPENAPI_ENABLED=false \
+	OPENAPI_ASSET_ROOT=/app/api/openapi
 
 EXPOSE 8080
 

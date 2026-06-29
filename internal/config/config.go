@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"strconv"
 	"time"
+
+	openapispec "eventhub-go/api/openapi"
 )
 
 const (
@@ -111,6 +113,8 @@ type AuthTokenConfig struct {
 type OpenAPIConfig struct {
 	// Enabled 控制是否注册 /openapi.yaml 和 /swagger/* 文档入口。
 	Enabled bool
+	// AssetRoot 指向 OpenAPI YAML 与 Swagger UI 静态资源所在的本地目录；相对路径按进程当前工作目录解析。
+	AssetRoot string
 }
 
 // Load 从环境变量加载配置，并对外部输入做标准化和兜底处理。
@@ -158,7 +162,8 @@ func Load() Config {
 			RefreshTokenTTL:          getEnvDuration("EVENTHUB_REFRESH_TOKEN_TTL", defaultRefreshTokenTTL),
 		},
 		OpenAPI: OpenAPIConfig{
-			Enabled: getEnvBool("OPENAPI_ENABLED", defaultOpenAPIEnabled(env)),
+			Enabled:   getEnvBool("OPENAPI_ENABLED", defaultOpenAPIEnabled(env)),
+			AssetRoot: getEnv("OPENAPI_ASSET_ROOT", openapispec.AssetRoot),
 		},
 	}
 
