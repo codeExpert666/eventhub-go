@@ -20,6 +20,7 @@ Java 版参考项目：
 
 - Go 1.24+
 - Docker / Docker Compose
+- Node.js / npx（仅运行 `make openapi-lint` 时需要；CI 会自动安装 Node）
 - 可选：`golangci-lint` 本机安装
 
 本机安装固定版本 golangci-lint：
@@ -145,6 +146,7 @@ SQL、OpenAPI 和容器相关命令：
 ```bash
 make sqlc
 make sqlc-check
+make openapi-lint
 make openapi-validate
 make openapi-generate
 make openapi-check
@@ -153,6 +155,13 @@ make docker-build
 make compose-up
 make compose-down
 ```
+
+OpenAPI 相关门禁分工：
+
+- `make openapi-lint`：使用固定版本 Redocly CLI 检查通用 OpenAPI 文档质量，例如 operationId、tags、summary、schema 示例和未使用组件提示。
+- `make openapi-validate`：使用 kin-openapi 检查 OpenAPI 结构、引用和 schema 合法性。
+- `make openapi-check`：串联 validate、oapi-codegen generate 和 generated file diff，确认契约和生成代码没有漂移。
+- `go test ./...`：包含项目自定义 OpenAPI policy test，检查统一响应 envelope、错误响应集中引用、RBAC 文档元数据、router/spec 对齐和真实响应契约。
 
 ## 环境配置
 

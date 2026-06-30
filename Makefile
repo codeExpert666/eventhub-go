@@ -1,8 +1,10 @@
 # OpenAPI 校验与代码生成工具。
 OAPI_CODEGEN_VERSION ?= v2.5.0
 KIN_OPENAPI_VERSION ?= v0.131.0
+REDOCLY_CLI_VERSION ?= 2.35.1
 OPENAPI_SPEC := api/openapi/eventhub.yaml
 OAPI_CODEGEN_CONFIG := api/openapi/oapi-codegen.yaml
+OPENAPI_LINT_CONFIG := redocly.yaml
 OPENAPI_GEN := api/openapi/gen/eventhub.gen.go
 
 # 数据库代码生成与 migration 工具。
@@ -22,7 +24,7 @@ GOLANGCI_LINT_IMAGE ?= golangci/golangci-lint:$(GOLANGCI_LINT_VERSION)
 # 应用镜像构建目标。
 DOCKER_IMAGE ?= eventhub-go:local
 
-.PHONY: fmt fmt-check vet test test-race lint quality quality-check sqlc sqlc-check migrate-up migrate-down openapi-validate openapi-generate openapi-check generated-check docker-build compose-up compose-down
+.PHONY: fmt fmt-check vet test test-race lint quality quality-check sqlc sqlc-check migrate-up migrate-down openapi-lint openapi-validate openapi-generate openapi-check generated-check docker-build compose-up compose-down
 
 fmt:
 	gofmt -w .
@@ -80,6 +82,9 @@ migrate-up:
 # `down $(MIGRATE_STEPS)` 按步数回滚，例：make migrate-down MIGRATE_STEPS=2。
 migrate-down:
 	go run github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION) -path migrations -database "$(MIGRATE_DATABASE_URL)" down $(MIGRATE_STEPS)
+
+openapi-lint:
+	npx --yes @redocly/cli@$(REDOCLY_CLI_VERSION) lint $(OPENAPI_SPEC) --config $(OPENAPI_LINT_CONFIG)
 
 openapi-validate:
 	go run github.com/getkin/kin-openapi/cmd/validate@$(KIN_OPENAPI_VERSION) $(OPENAPI_SPEC)

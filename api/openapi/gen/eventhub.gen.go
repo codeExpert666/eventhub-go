@@ -36,8 +36,8 @@ type ApiResponse struct {
 	// Code 应用层响应码。成功时为 COMMON-000，失败时对应具体错误码。
 	Code string `json:"code"`
 
-	// Data 业务数据载荷。纯操作或失败时可为 null。
-	Data interface{} `json:"data"`
+	// Data 业务数据载荷。具体响应 schema 负责约束结构；纯操作或失败时可为 null。
+	Data *map[string]interface{} `json:"data"`
 
 	// Message 面向调用方的响应描述。
 	Message string `json:"message"`
@@ -158,8 +158,8 @@ type ApiResponseUserInfo struct {
 // ApiResponseVoid defines model for ApiResponseVoid.
 type ApiResponseVoid struct {
 	// Code 应用层响应码。成功时为 COMMON-000，失败时对应具体错误码。
-	Code string      `json:"code"`
-	Data interface{} `json:"data"`
+	Code string                  `json:"code"`
+	Data *map[string]interface{} `json:"data"`
 
 	// Message 面向调用方的响应描述。
 	Message string `json:"message"`

@@ -1,0 +1,20 @@
+extends:
+  - minimal
+
+rules:
+  # 安全策略由 Go policy test 校验：本仓库要求顶层 security 为空，并由 operation 显式表达公开或 BearerAuth。
+  security-defined: off
+  # 本地开发 server 是当前契约的一部分，不把 localhost 当作 lint 问题。
+  no-server-example.com: off
+  # license URL 与 actuator 无 4xx 响应暂不作为首批阻断规则。
+  info-license-strict: off
+  operation-4xx-response: off
+
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-summary: error
+  operation-description: warn
+  operation-tag-defined: error
+  no-unused-components: warn
+  nullable-type-sibling: error
+  no-invalid-schema-examples: error

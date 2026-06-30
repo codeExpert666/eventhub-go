@@ -424,8 +424,10 @@ components:
           description: 面向调用方的响应描述。
           example: 成功
         data:
-          description: 业务数据载荷。纯操作或失败时可为 null。
+          description: 业务数据载荷。具体响应 schema 负责约束结构；纯操作或失败时可为 null。
+          type: object
           nullable: true
+          additionalProperties: true
         requestId:
           type: string
           description: 当前请求的唯一追踪标识。
@@ -457,7 +459,9 @@ components:
         - type: object
           properties:
             data:
+              type: object
               nullable: true
+              additionalProperties: true
               example: null
     ApiResponseUserInfo:
       allOf:

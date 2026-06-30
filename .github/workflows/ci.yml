@@ -56,8 +56,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # OpenAPI lint 通过 npx 执行固定版本 Redocly CLI；CI 显式提供 Node 运行时。
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Download Go modules
         run: go mod download
+
+      - name: Lint OpenAPI
+        run: make openapi-lint
 
       - name: Check generated contracts
         run: make generated-check
