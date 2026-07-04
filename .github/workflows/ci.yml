@@ -71,6 +71,34 @@ jobs:
       - name: Check generated contracts
         run: make generated-check
 
+  openapi-breaking:
+    name: OpenAPI Breaking Change
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # PR 兼容性检查需要同时看到“旧契约”和“新契约”：checkout 已经拿到当前 PR 工作区，
+      # 这里再把 PR 的 base branch 拉到本地 remote-tracking ref，供 Makefile 用
+      # `origin/<base>:api/openapi/eventhub.yaml` 读取 base 侧的历史 OpenAPI spec。
+      # github.base_ref 只在 pull_request 事件中有值，因此 openapi-breaking job 限定为 PR-only。
+      # --no-tags 避免下载无关 tag；--depth=1 只取 base branch 最新提交，足够做本次 spec 对比。
+      # refspec 左侧是远端 base 分支名，右侧显式写入 refs/remotes/origin/<base>，
+      # 这样后续 `OPENAPI_BASE_REF=origin/<base>` 与本地 Makefile 默认命名保持一致。
+      - name: Fetch PR base branch
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+
+      - name: Check OpenAPI breaking changes
+        run: make openapi-breaking-check OPENAPI_BASE_REF=origin/${{ github.base_ref }}
+
   docker:
     name: Docker
     runs-on: ubuntu-latest

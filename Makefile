@@ -2,10 +2,13 @@
 OAPI_CODEGEN_VERSION ?= v2.5.0
 KIN_OPENAPI_VERSION ?= v0.131.0
 REDOCLY_CLI_VERSION ?= 2.35.1
+OASDIFF_VERSION ?= v1.21.0
 OPENAPI_SPEC := api/openapi/eventhub.yaml
 OAPI_CODEGEN_CONFIG := api/openapi/oapi-codegen.yaml
 OPENAPI_LINT_CONFIG := redocly.yaml
 OPENAPI_GEN := api/openapi/gen/eventhub.gen.go
+OPENAPI_BASE_REF ?= origin/main
+OPENAPI_BREAKING_MATCH_PATH ?= ^/api/v1($$|/)
 
 # 数据库代码生成与 migration 工具。
 SQLC_VERSION ?= v1.30.0
@@ -24,7 +27,7 @@ GOLANGCI_LINT_IMAGE ?= golangci/golangci-lint:$(GOLANGCI_LINT_VERSION)
 # 应用镜像构建目标。
 DOCKER_IMAGE ?= eventhub-go:local
 
-.PHONY: fmt fmt-check vet test test-race lint quality quality-check sqlc sqlc-check migrate-up migrate-down openapi-lint openapi-validate openapi-generate openapi-check generated-check docker-build compose-up compose-down
+.PHONY: fmt fmt-check vet test test-race lint quality quality-check sqlc sqlc-check migrate-up migrate-down openapi-lint openapi-validate openapi-generate openapi-check openapi-breaking-check generated-check docker-build compose-up compose-down
 
 fmt:
 	gofmt -w .
@@ -97,6 +100,28 @@ openapi-check:
 	$(MAKE) openapi-validate
 	$(MAKE) openapi-generate
 	git diff --exit-code $(OPENAPI_GEN)
+
+openapi-breaking-check:
+	@# 输出流处理原则：只丢弃该 Git 命令在当前检查场景中会产生、且会干扰 Make 输出的那一路。
+	@# rev-parse 只检查 base ref 是否能解析为 commit；成功时会把 commit SHA 写到 stdout。
+	@# 因此这里丢弃 stdout，避免正常通过时打印无关 SHA；失败噪声已由 --quiet 抑制，不必再加 2>/dev/null。
+	@if ! git rev-parse --verify --quiet "$(OPENAPI_BASE_REF)^{commit}" >/dev/null; then \
+		echo "OpenAPI breaking check requires base ref '$(OPENAPI_BASE_REF)'."; \
+		echo "Fetch it first, for example: git fetch origin main"; \
+		exit 2; \
+	fi
+	@# cat-file -e 只检查 base ref 中是否存在 OpenAPI spec blob；成功时本身不输出内容。
+	@# 因此不用额外丢弃 stdout；失败时 Git 会向 stderr 打印底层 fatal 信息，这里丢弃 stderr，改用下面的业务化提示。
+	@if ! git cat-file -e "$(OPENAPI_BASE_REF):$(OPENAPI_SPEC)" 2>/dev/null; then \
+		echo "OpenAPI breaking check could not find $(OPENAPI_SPEC) in base ref '$(OPENAPI_BASE_REF)'."; \
+		echo "Verify the base branch contains the OpenAPI spec, then rerun this target."; \
+		exit 2; \
+	fi
+	@# oasdiff breaking 的参数顺序是 base 在前、revision 在后；这里用 base branch 的 spec 作为旧契约，当前工作区 spec 作为新契约。
+	@# "$(OPENAPI_BASE_REF):$(OPENAPI_SPEC)" 是 Git object path，可直接读取 base ref 中的历史 YAML；"$(OPENAPI_SPEC)" 是当前工作区文件。
+	@# --fail-on ERR 只在 oasdiff 判定存在 error 级 breaking change 时失败，warning / informational diff 不阻断 Make target。
+	@# --match-path 将检查范围收敛到 /api/v1，避免 actuator、Swagger 文档路由或未来其他版本路径影响 v1 兼容性门禁。
+	go run github.com/oasdiff/oasdiff@$(OASDIFF_VERSION) breaking "$(OPENAPI_BASE_REF):$(OPENAPI_SPEC)" "$(OPENAPI_SPEC)" --fail-on ERR --match-path '$(OPENAPI_BREAKING_MATCH_PATH)'
 
 generated-check:
 	$(MAKE) sqlc-check
