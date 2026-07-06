@@ -156,11 +156,6 @@ eventhub-go/
       handler/
         system/
         auth/
-      dto/
-        system/
-          request.go
-          response.go
-        auth/
       response/
       validation/
 
@@ -215,7 +210,7 @@ eventhub-go/
 - 不要为了“看起来完整”创建空 Go package。
 - 当前阶段没有实现的业务包，不要创建空 `.go` 文件。
 - 允许使用 `.gitkeep` 或 `README.md` 作为非 Go 目录占位，但不要制造无法编译或无意义 package。
-- 一旦某个功能阶段开始，例如 auth、user、event、order，就必须按规范补齐对应 `domain`、`service`、`repository`、`handler/<module>`、`dto/<module>`、`security` 或 `platform` 目录。
+- 一旦某个功能阶段开始，例如 auth、user、event、order，就必须按规范补齐对应 `domain`、`service`、`repository`、`handler/<module>`、`security` 或 `platform` 目录；HTTP DTO 只有在 OpenAPI generated model 不适合直接承载传输契约时才新增。
 - 新增数据库访问时：
   - SQL 文件放 `internal/repository/mysql/queries/`。
   - sqlc generated code 放 `internal/repository/mysql/sqlc/`。
@@ -238,7 +233,7 @@ eventhub-go/
 ### 7.4 每次生成代码前的结构检查清单
 在创建或修改代码前，Codex 必须先判断：
 - 这是 HTTP 传输层代码吗？如果是，放 `internal/http`；具体业务 handler 放 `internal/http/handler/<domain>`。
-- 这是请求/响应 DTO 吗？如果是，放 `internal/http/dto/<domain>`。
+- 这是 HTTP 请求/响应传输模型吗？如果 OpenAPI strict server 已生成等价 model，handler 直接使用 `api/openapi/gen` 类型；如果没有生成模型或生成模型不适合该传输场景，再放 `internal/http/dto/<domain>` 并在设计文档说明原因。
 - 这是业务用例吗？如果是，放 `internal/service/<domain>`。
 - 这是 service Command / Query / Result 吗？如果是，放 `internal/service/<domain>` 内的 `command.go`、`query.go` 或 `result.go`。
 - 这是领域模型或枚举吗？如果是，放 `internal/domain/<domain>` 或 `internal/domain/common`。
@@ -251,27 +246,30 @@ eventhub-go/
 - 这是应用装配吗？如果是，放 `internal/app`。
 - 这是可执行入口吗？如果是，只能放 `cmd/eventhub/main.go`。
 
-### 7.5 HTTP handler / DTO 模块化组织
+### 7.5 HTTP handler / 传输模型模块化组织
 
-HTTP 层按传输职责横向分层，同时在 `handler` 和 `dto` 内部按业务模块拆子包，避免所有模块长期堆在同一目录和同一 package 中：
+HTTP 层按传输职责横向分层。Strict Server 接入后，OpenAPI 声明的业务 API 优先使用 `api/openapi/gen` 生成的 request/response model，handler 仍按业务模块拆子包，避免所有模块长期堆在同一目录和同一 package 中：
 
 1. 正式业务模块默认使用 `internal/http/handler/<module>` 子包：
    - 例如 `internal/http/handler/system`、`internal/http/handler/auth`、`internal/http/handler/user`。
    - 子包内 `handler.go` 放 handler struct、constructor 和依赖字段。
-   - 复杂模块可按 use case 拆文件，例如 `register.go`、`login.go`、`list_admin_users.go`。
+   - 生产 HTTP 入口默认放 `strict.go`，复杂模块可按 use case 拆校验、映射或辅助文件。
    - 子包内类型可命名为 `Handler`，调用处使用 import alias 表达模块，例如 `systemhandler.NewHandler`、`authhandler.NewHandler`。
-2. 正式业务模块默认使用 `internal/http/dto/<module>` 子包：
-   - 例如 `internal/http/dto/system`、`internal/http/dto/auth`、`internal/http/dto/user`。
-   - `request.go` 放 JSON request body、query 参数对象和 path 参数辅助对象。
-   - `response.go` 放 HTTP response data、list item、summary、detail response 对象。
-   - DTO 数量很多时，可继续按 use case 拆分，例如 `login_request.go`、`login_response.go`、`admin_user_response.go`。
-3. 不要创建空文件凑结构：
+2. OpenAPI strict server 已生成的请求体、query/path 参数对象和响应 data model，handler 直接使用 generated model：
+   - 例如 `openapigen.RegisterRequest`、`openapigen.ListAdminUsersParams`、`openapigen.ApiResponseLogin`。
+   - handler 负责校验 generated request、映射到 service Command / Query，以及把 service Result 映射到 generated response。
+   - service、domain、repository 不依赖 `api/openapi/gen`。
+3. 只有在以下场景才新增 `internal/http/dto/<module>`：
+   - 非 OpenAPI 管理面、调试面或内部端点没有 generated model。
+   - generated model 无法合理表达当前 HTTP 传输约束，需要项目自定义 DTO 承载。
+   - 兼容迁移期临时保留旧 DTO；必须在 design / implementation note 中说明生命周期。
+4. 不要创建空文件凑结构：
    - 没有请求 DTO 时，不创建空 `request.go`。
    - 没有响应 DTO 时，不创建空 `response.go`。
    - 当前阶段没有实现的模块，不创建空 handler/dto Go package。
-4. `internal/http/handler` 和 `internal/http/dto` 根目录只作为传输层分类目录，不长期放具体业务 handler 或具体业务 DTO。
-5. handler 子包可以依赖对应 dto 子包、service 包、HTTP response/validation 工具；service、domain、repository 不依赖 HTTP DTO。
-6. 如果确需偏离按模块子包组织，必须在设计文档和 implementation note 中说明原因；属于架构取舍时更新 ADR。
+5. `internal/http/handler` 和可选的 `internal/http/dto` 根目录只作为传输层分类目录，不长期放具体业务 handler 或具体业务 DTO。
+6. handler 子包可以依赖 generated OpenAPI model、必要的 dto 子包、service 包、HTTP response/validation 工具；service、domain、repository 不依赖 HTTP DTO 或 generated OpenAPI model。
+7. 如果确需偏离按模块子包组织，必须在设计文档和 implementation note 中说明原因；属于架构取舍时更新 ADR。
 
 推荐结构：
 
@@ -280,17 +278,13 @@ internal/http/
   handler/
     system/
       handler.go
+      strict.go
     auth/
       handler.go
-      register.go
-      login.go
-  dto/
-    system/
-      request.go
-      response.go
-    auth/
-      request.go
-      response.go
+      strict.go
+      validation.go
+  response/
+  validation/
 ```
 
 ### 7.6 HTTP DTO / VO / Value Object 边界
@@ -299,14 +293,14 @@ internal/http/
 
 1. 本项目不设置 `internal/http/vo`。
 2. Java 项目中常见的 VO 命名，在 Go 版不直接复刻。
-3. HTTP 层所有请求和响应结构体统一放 `internal/http/dto/<module>`。
-4. `internal/http/dto/<module>` 包含：
+3. OpenAPI strict server 已提供且适用于本项目的 HTTP 请求/响应结构体，直接使用 `api/openapi/gen` 生成类型，不再在 `internal/http/dto` 中复制一份。
+4. `internal/http/dto/<module>` 只用于 generated model 不适用或非 OpenAPI HTTP 面，可能包含：
    - JSON request body
    - query 参数对象
    - path 参数辅助对象，如确实需要
    - HTTP response data 对象
    - list item / summary / detail response 对象
-5. `internal/http/dto` 类型命名推荐：
+5. 可选 `internal/http/dto` 类型命名推荐：
    - `XxxRequest`
    - `XxxResponse`
    - `XxxListItemResponse`
@@ -316,37 +310,38 @@ internal/http/
    - `XxxVO`
    - `XxxDTO`，除非外部生成代码或兼容需求
    - `XxxResp`
-7. `internal/http/response` 只放统一响应 envelope 和 writer：
-   - `APIResponse`
-   - `Success` / `Failure`
-   - `WriteSuccess` / `WriteError` / `WriteJSON` / `WriteStatus`
-8. `internal/http/response` 不允许放具体业务响应 DTO。
-9. DDD Value Object 放 domain 层：
+7. `internal/http/response` 只放统一响应元数据和错误写出能力：
+   - `SuccessMeta` / `ErrorMeta`
+   - `ErrorBody`
+   - `WriteError`
+8. 成功响应 envelope 使用 OpenAPI generated typed response，例如 `openapigen.ApiResponseLogin`；不要再新增项目自有的 `APIResponse` 泛型/any envelope。
+9. `internal/http/response` 不允许放具体业务响应 DTO。
+10. DDD Value Object 放 domain 层：
    - `internal/domain/common`
    - `internal/domain/user`
    - `internal/domain/order`
    - 或对应业务 domain 包
-10. domain model 和 domain value object 不应带 HTTP JSON 契约职责。
-11. handler 可以依赖对应模块的 dto 子包。
-12. service 不应依赖 `internal/http/dto`。
-13. repository 不应依赖 `internal/http/dto`。
-14. sqlc generated model 不能作为 HTTP DTO 对外暴露。
-15. handler 负责：
-   - decode HTTP DTO
-   - validate HTTP DTO
-   - map DTO to service Command / Query
-   - map service result / domain model to HTTP DTO
-   - call `response.WriteSuccess` / `response.WriteError`
-16. service 负责业务规则和事务边界，不拼 HTTP JSON。
-17. repository/mysql 负责 sqlc row 与 domain model 的映射。
+11. domain model 和 domain value object 不应带 HTTP JSON 契约职责。
+12. handler 可以依赖 generated OpenAPI model 和必要的 dto 子包。
+13. service 不应依赖 `internal/http/dto` 或 `api/openapi/gen`。
+14. repository 不应依赖 `internal/http/dto` 或 `api/openapi/gen`。
+15. sqlc generated model 不能作为 HTTP DTO 对外暴露。
+16. handler 负责：
+   - 接收 strict server decoded/generated request object
+   - validate HTTP 请求字段
+   - map generated request 或必要 DTO to service Command / Query
+   - map service result / domain model to generated response data
+   - 成功时填充 generated typed response，失败时交给 `response.WriteError`
+17. service 负责业务规则和事务边界，不拼 HTTP JSON。
+18. repository/mysql 负责 sqlc row 与 domain model 的映射。
 
 | 类型 | 放置位置 | 示例 |
 |---|---|---|
-| HTTP 请求体 | `internal/http/dto/<module>/request.go` | `RegisterRequest` |
-| HTTP 响应 data | `internal/http/dto/<module>/response.go` | `LoginResponse` |
-| 列表项响应 | `internal/http/dto/<module>/response.go` | `AdminUserListItemResponse` |
-| 统一响应 envelope | `internal/http/response` | `APIResponse` |
-| 响应写出工具 | `internal/http/response` | `WriteSuccess` |
+| HTTP 请求体 | `api/openapi/gen`，必要时 `internal/http/dto/<module>/request.go` | `openapigen.RegisterRequest` |
+| HTTP 响应 data | `api/openapi/gen`，必要时 `internal/http/dto/<module>/response.go` | `openapigen.LoginResponse` |
+| 列表项响应 | `api/openapi/gen`，必要时 `internal/http/dto/<module>/response.go` | `openapigen.UserInfo` |
+| 统一响应元数据 | `internal/http/response` | `SuccessMeta` |
+| 错误写出工具 | `internal/http/response` | `WriteError` |
 | service 写输入 | `internal/service/<domain>/command.go` | `RegisterCommand` |
 | service 读输入 | `internal/service/<domain>/query.go` | `ListAdminUsersQuery` |
 | service 输出 | `internal/service/<domain>/result.go` | `LoginResult` |
@@ -392,7 +387,7 @@ service 层既承载业务规则，也承载 handler 与业务用例之间的输
    - 输出用 `XxxResult`。
    - 不使用 `XxxRequest`、`XxxResponse`、`XxxDTO`、`XxxVO`、`XxxResp` 作为 service 类型后缀。
 8. service Command / Query / Result 不带 HTTP `json` tag，不承担 HTTP 契约。
-9. service 不依赖 `internal/http/dto`；handler 负责 DTO 与 Command / Query / Result 的映射。
+9. service 不依赖 `internal/http/dto` 或 `api/openapi/gen`；handler 负责 generated request / 必要 DTO 与 Command / Query / Result 的映射。
 10. service Result 可以包含 domain model、domain value object 或 service 层结果类型，但不能直接暴露 sqlc generated model。
 
 推荐结构：
@@ -441,15 +436,15 @@ internal/service/<domain>/
 ### 7.9 禁止偏离规则
 - 不要把业务逻辑写进 `cmd/eventhub/main.go`。
 - 不要让 handler 直接访问 sqlc、`database/sql`、redis。
-- 不要让 domain 依赖 HTTP DTO。
+- 不要让 domain 依赖 HTTP DTO 或 OpenAPI generated model。
 - 不要让 domain 依赖 sqlc generated model。
 - 不要在 platform 中放业务规则。
 - 不要在 `repository/mysql` 中做 HTTP 错误响应。
 - 不要在 service 中拼 HTTP JSON。
-- 不要把新业务 handler 或 DTO 长期堆在 `internal/http/handler`、`internal/http/dto` 根目录。
+- 不要把新业务 handler 或必要 DTO 长期堆在 `internal/http/handler`、`internal/http/dto` 根目录。
 - 不要为了少写文件而把 handler、service、repository 混在一个文件。
 - 不要为了少写文件而把 service 的 Command / Query / Result 和多个复杂业务方法长期堆在 `service.go`。
-- 不要把 request DTO 当 domain model 长期使用。
+- 不要把 request DTO 或 OpenAPI generated request model 当 domain model 长期使用。
 - 不要用 `panic` 表达业务错误。
 - 不要把角色、邮箱、用户名、用户状态写入 JWT。
 - 不要新增功能后忘记更新 `docs/ai` 和 parity matrix。
