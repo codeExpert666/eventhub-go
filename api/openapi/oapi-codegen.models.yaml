@@ -1,0 +1,9 @@
+# EventHub OpenAPI model 生成配置。
+# 只生成 schema/request/response model，运行时 server wrapper 由 oapi-codegen.server.yaml 生成。
+package: gen
+
+generate:
+  # CLI `-generate types` 在配置文件中对应 `models`。
+  models: true
+
+output: api/openapi/gen/models.gen.go

@@ -300,6 +300,27 @@ func TestOpenAPIEndpointsAreNotRegisteredWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestOpenAPIDeclaredRoutesUseGeneratedStrictRouter(t *testing.T) {
+	recorder := performRequest(
+		testRouter(),
+		nethttp.MethodPost,
+		"/api/v1/auth/login",
+		[]byte(`{"usernameOrEmail":"alice"`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	if recorder.Code != nethttp.StatusBadRequest {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeAPIResponse(t, recorder)
+	if body["code"] != "COMMON-400" {
+		t.Fatalf("unexpected code: %v", body["code"])
+	}
+	if body["message"] != "请求体格式不合法" {
+		t.Fatalf("unexpected message: %v", body["message"])
+	}
+}
+
 func TestMissingRouteReturnsUnifiedNotFound(t *testing.T) {
 	recorder := performRequest(testRouter(), nethttp.MethodGet, "/favicon.ico", nil, nil)
 	if recorder.Code != nethttp.StatusNotFound {

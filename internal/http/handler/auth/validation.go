@@ -5,84 +5,102 @@ import (
 	"regexp"
 	"strings"
 
+	openapigen "eventhub-go/api/openapi/gen"
 	"eventhub-go/internal/apperror"
-	authdto "eventhub-go/internal/http/dto/auth"
 	"eventhub-go/internal/http/validation"
+	authsvc "eventhub-go/internal/service/auth"
 )
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
-func validateRegisterRequest(request authdto.RegisterRequest) *apperror.AppError {
-	fields := validation.FieldErrors{}
-	username := strings.TrimSpace(request.Username)
-	email := strings.TrimSpace(request.Email)
-	password := request.Password
+func parseRegisterCommand(request *openapigen.RegisterRequest) (authsvc.RegisterCommand, *apperror.AppError) {
+	if request == nil {
+		return authsvc.RegisterCommand{}, validation.MalformedBodyError()
+	}
 
-	if username == "" {
+	fields := validation.FieldErrors{}
+	command := authsvc.RegisterCommand{
+		Username: strings.TrimSpace(request.Username),
+		Email:    strings.TrimSpace(string(request.Email)),
+		Password: request.Password,
+	}
+
+	if command.Username == "" {
 		fields["username"] = "username 不能为空"
-	} else if len(username) < 3 || len(username) > 32 {
+	} else if len(command.Username) < 3 || len(command.Username) > 32 {
 		fields["username"] = "username 长度必须在 3 到 32 个字符之间"
-	} else if !usernamePattern.MatchString(username) {
+	} else if !usernamePattern.MatchString(command.Username) {
 		fields["username"] = "username 只能包含字母、数字和下划线"
 	}
 
-	if email == "" {
+	if command.Email == "" {
 		fields["email"] = "email 不能为空"
-	} else if len(email) > 128 {
+	} else if len(command.Email) > 128 {
 		fields["email"] = "email 长度不能超过 128 个字符"
-	} else if _, err := mail.ParseAddress(email); err != nil {
+	} else if _, err := mail.ParseAddress(command.Email); err != nil {
 		fields["email"] = "email 格式不合法"
 	}
 
-	if password == "" {
+	if command.Password == "" {
 		fields["password"] = "password 不能为空"
-	} else if len(password) < 8 || len(password) > 72 {
+	} else if len(command.Password) < 8 || len(command.Password) > 72 {
 		fields["password"] = "password 长度必须在 8 到 72 个字符之间"
-	} else if !containsLetterAndDigit(password) {
+	} else if !containsLetterAndDigit(command.Password) {
 		fields["password"] = "password 至少包含字母和数字"
 	}
 
 	if len(fields) > 0 {
-		return validation.BodyValidationError(fields)
+		return authsvc.RegisterCommand{}, validation.BodyValidationError(fields)
 	}
-	return nil
+	return command, nil
 }
 
-func validateLoginRequest(request authdto.LoginRequest) *apperror.AppError {
-	fields := validation.FieldErrors{}
-	usernameOrEmail := strings.TrimSpace(request.UsernameOrEmail)
+func parseLoginCommand(request *openapigen.LoginRequest) (authsvc.LoginCommand, *apperror.AppError) {
+	if request == nil {
+		return authsvc.LoginCommand{}, validation.MalformedBodyError()
+	}
 
-	if usernameOrEmail == "" {
+	fields := validation.FieldErrors{}
+	command := authsvc.LoginCommand{
+		UsernameOrEmail: strings.TrimSpace(request.UsernameOrEmail),
+		Password:        request.Password,
+	}
+
+	if command.UsernameOrEmail == "" {
 		fields["usernameOrEmail"] = "用户名或邮箱不能为空"
-	} else if len(usernameOrEmail) > 128 {
+	} else if len(command.UsernameOrEmail) > 128 {
 		fields["usernameOrEmail"] = "用户名或邮箱长度不能超过 128 个字符"
 	}
-	if request.Password == "" {
+
+	if command.Password == "" {
 		fields["password"] = "密码不能为空"
-	} else if len(request.Password) > 72 {
+	} else if len(command.Password) > 72 {
 		fields["password"] = "密码长度不能超过 72 个字符"
 	}
 
 	if len(fields) > 0 {
-		return validation.BodyValidationError(fields)
+		return authsvc.LoginCommand{}, validation.BodyValidationError(fields)
 	}
-	return nil
+	return command, nil
 }
 
-func validateRefreshTokenRequest(request authdto.RefreshTokenRequest) *apperror.AppError {
-	fields := validation.FieldErrors{}
-	refreshToken := strings.TrimSpace(request.RefreshToken)
+func parseRefreshCommand(request *openapigen.RefreshTokenRequest) (authsvc.RefreshCommand, *apperror.AppError) {
+	if request == nil {
+		return authsvc.RefreshCommand{}, validation.MalformedBodyError()
+	}
 
-	if refreshToken == "" {
+	fields := validation.FieldErrors{}
+
+	if strings.TrimSpace(request.RefreshToken) == "" {
 		fields["refreshToken"] = "refreshToken 不能为空"
-	} else if len(refreshToken) > 128 {
+	} else if len(request.RefreshToken) > 128 {
 		fields["refreshToken"] = "refreshToken 长度不能超过 128 个字符"
 	}
 
 	if len(fields) > 0 {
-		return validation.BodyValidationError(fields)
+		return authsvc.RefreshCommand{}, validation.BodyValidationError(fields)
 	}
-	return nil
+	return authsvc.RefreshCommand{RefreshToken: request.RefreshToken}, nil
 }
 
 func containsLetterAndDigit(value string) bool {

@@ -50,12 +50,14 @@ func TestAppError(t *testing.T) {
 		t.Fatalf("unexpected default message: %s", err.Message())
 	}
 
-	custom := apperror.WithData(apperror.CommonValidation, "请求体参数校验失败", map[string]string{"message": "message 不能为空"})
+	custom := apperror.WithDetails(apperror.CommonValidation, "请求体参数校验失败", apperror.Details{
+		"message": "message 不能为空",
+	})
 	if custom.Message() != "请求体参数校验失败" {
 		t.Fatalf("unexpected custom message: %s", custom.Message())
 	}
-	if custom.Data() == nil {
-		t.Fatal("expected validation data")
+	if custom.Details()["message"] != "message 不能为空" {
+		t.Fatalf("unexpected validation details: %#v", custom.Details())
 	}
 }
 
@@ -73,4 +75,48 @@ func TestFromError(t *testing.T) {
 	if !errors.Is(wrapped, base) {
 		t.Fatal("expected wrapped cause")
 	}
+}
+
+func TestFromErrorOrInternal(t *testing.T) {
+	t.Run("returns existing app error", func(t *testing.T) {
+		appErr := apperror.New(apperror.CommonValidation, "请求参数校验失败")
+
+		result := apperror.FromErrorOrInternal(appErr)
+
+		if result != appErr {
+			t.Fatal("expected existing app error to be returned")
+		}
+		if result.Code() != apperror.CommonValidation {
+			t.Fatalf("unexpected code: %s", result.Code().String())
+		}
+	})
+
+	t.Run("wraps plain error as internal", func(t *testing.T) {
+		cause := errors.New("db unavailable")
+
+		result := apperror.FromErrorOrInternal(cause)
+
+		if result.Code() != apperror.CommonInternal {
+			t.Fatalf("unexpected code: %s", result.Code().String())
+		}
+		if result.Message() != "系统内部错误" {
+			t.Fatalf("unexpected message: %s", result.Message())
+		}
+		if !errors.Is(result, cause) {
+			t.Fatal("expected wrapped cause")
+		}
+	})
+
+	t.Run("wraps typed nil app error as internal", func(t *testing.T) {
+		var appErr *apperror.AppError
+
+		result := apperror.FromErrorOrInternal(appErr)
+
+		if result == nil {
+			t.Fatal("expected non-nil app error")
+		}
+		if result.Code() != apperror.CommonInternal {
+			t.Fatalf("unexpected code: %s", result.Code().String())
+		}
+	})
 }

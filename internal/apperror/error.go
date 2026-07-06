@@ -1,10 +1,13 @@
 package apperror
 
+// Details 表示应用错误携带的结构化上下文。
+type Details map[string]any
+
 // AppError 表示可被统一映射为 API 响应的应用错误。
 type AppError struct {
 	code    Code
 	message string
-	data    any
+	details Details
 	cause   error
 }
 
@@ -18,10 +21,10 @@ func New(code Code, message string) *AppError {
 	return &AppError{code: code, message: message}
 }
 
-// WithData 创建携带结构化错误数据的 AppError。
-func WithData(code Code, message string, data any) *AppError {
+// WithDetails 创建携带结构化错误上下文的 AppError。
+func WithDetails(code Code, message string, details Details) *AppError {
 	err := New(code, message)
-	err.data = data
+	err.details = details
 	return err
 }
 
@@ -64,10 +67,10 @@ func (e *AppError) Message() string {
 	return e.message
 }
 
-// Data 返回可选的结构化错误数据。
-func (e *AppError) Data() any {
+// Details 返回可选的结构化错误上下文。
+func (e *AppError) Details() Details {
 	if e == nil {
 		return nil
 	}
-	return e.data
+	return e.details
 }

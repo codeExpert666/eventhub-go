@@ -1,96 +1,107 @@
 package user
 
 import (
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
+	openapigen "eventhub-go/api/openapi/gen"
 	"eventhub-go/internal/apperror"
-	userdto "eventhub-go/internal/http/dto/user"
 	"eventhub-go/internal/http/validation"
 	"eventhub-go/internal/page"
+	usersvc "eventhub-go/internal/service/user"
 )
 
 const localDateTimeLayout = "2006-01-02T15:04:05"
 
-func parseAdminUserListRequest(values url.Values) (userdto.AdminUserListRequest, *apperror.AppError) {
+func parseAdminUserListQuery(params openapigen.ListAdminUsersParams) (usersvc.AdminUserListQuery, *apperror.AppError) {
 	fields := validation.FieldErrors{}
-	request := userdto.AdminUserListRequest{
+	query := usersvc.AdminUserListQuery{
 		Page: page.DefaultPage,
 		Size: page.DefaultSize,
 	}
 
-	request.Page = parseIntQuery(values, "page", page.DefaultPage, fields)
-	request.Size = parseIntQuery(values, "size", page.DefaultSize, fields)
-	request.Username = values.Get("username")
-	request.Email = values.Get("email")
-	request.Status = values.Get("status")
-	request.CreatedAtFrom = parseTimeQuery(values, "createdAtFrom", fields)
-	request.CreatedAtTo = parseTimeQuery(values, "createdAtTo", fields)
-	request.UpdatedAtFrom = parseTimeQuery(values, "updatedAtFrom", fields)
-	request.UpdatedAtTo = parseTimeQuery(values, "updatedAtTo", fields)
-
-	validateAdminUserListRequest(request, fields)
-	if len(fields) > 0 {
-		return userdto.AdminUserListRequest{}, queryValidationError(fields)
+	if params.Page != nil {
+		query.Page = *params.Page
 	}
-	return request, nil
-}
+	if params.Size != nil {
+		query.Size = *params.Size
+	}
+	if params.Username != nil {
+		query.Username = strings.TrimSpace(*params.Username)
+	}
+	if params.Email != nil {
+		query.Email = strings.TrimSpace(*params.Email)
+	}
+	if params.Status != nil {
+		query.Status = strings.TrimSpace(string(*params.Status))
+	}
+	query.CreatedAtFrom = parseTimeParam(params.CreatedAtFrom, "createdAtFrom", fields)
+	query.CreatedAtTo = parseTimeParam(params.CreatedAtTo, "createdAtTo", fields)
+	query.UpdatedAtFrom = parseTimeParam(params.UpdatedAtFrom, "updatedAtFrom", fields)
+	query.UpdatedAtTo = parseTimeParam(params.UpdatedAtTo, "updatedAtTo", fields)
 
-func validateAdminUserListRequest(request userdto.AdminUserListRequest, fields validation.FieldErrors) {
-	if request.Page < 1 {
+	if query.Page < 1 {
 		fields["page"] = "页码不能小于 1"
 	}
-	if request.Size < 1 {
+	if query.Size < 1 {
 		fields["size"] = "每页条数不能小于 1"
-	} else if request.Size > page.MaxSize {
+	} else if query.Size > page.MaxSize {
 		fields["size"] = "每页条数不能超过 100"
 	}
-	if len(strings.TrimSpace(request.Username)) > 32 {
+	if len(query.Username) > 32 {
 		fields["username"] = "用户名筛选长度不能超过 32"
 	}
-	if len(strings.TrimSpace(request.Email)) > 128 {
+	if len(query.Email) > 128 {
 		fields["email"] = "邮箱筛选长度不能超过 128"
 	}
-	status := strings.TrimSpace(request.Status)
-	if status != "" && status != string(userdto.UserStatusEnabled) && status != string(userdto.UserStatusDisabled) {
+	if query.Status != "" && query.Status != string(openapigen.ENABLED) && query.Status != string(openapigen.DISABLED) {
 		fields["status"] = "用户状态只能是 ENABLED 或 DISABLED"
 	}
-	if request.CreatedAtFrom != nil && request.CreatedAtTo != nil && request.CreatedAtFrom.After(*request.CreatedAtTo) {
+	if query.CreatedAtFrom != nil && query.CreatedAtTo != nil && query.CreatedAtFrom.After(*query.CreatedAtTo) {
 		fields["createdAtFrom"] = "createdAtFrom 不能晚于 createdAtTo"
 	}
-	if request.UpdatedAtFrom != nil && request.UpdatedAtTo != nil && request.UpdatedAtFrom.After(*request.UpdatedAtTo) {
+	if query.UpdatedAtFrom != nil && query.UpdatedAtTo != nil && query.UpdatedAtFrom.After(*query.UpdatedAtTo) {
 		fields["updatedAtFrom"] = "updatedAtFrom 不能晚于 updatedAtTo"
 	}
+
+	if len(fields) > 0 {
+		return usersvc.AdminUserListQuery{}, validation.ParameterValidationError(fields)
+	}
+	return query, nil
 }
 
-func validateUpdateUserStatusRequest(request userdto.UpdateUserStatusRequest) *apperror.AppError {
+func parseUpdateUserStatusCommand(userID int64, request *openapigen.UpdateUserStatusRequest) (usersvc.UpdateUserStatusCommand, *apperror.AppError) {
+	if userID <= 0 {
+		return usersvc.UpdateUserStatusCommand{}, validation.ParameterValidationError(validation.FieldErrors{
+			"userId": "userId 必须是正整数",
+		})
+	}
+	if request == nil {
+		return usersvc.UpdateUserStatusCommand{}, validation.MalformedBodyError()
+	}
+
 	fields := validation.FieldErrors{}
-	if request.Status == nil {
+	switch request.Status {
+	case "":
 		fields["status"] = "status 不能为空"
+	case openapigen.ENABLED, openapigen.DISABLED:
+	default:
+		fields["status"] = "用户状态只能是 ENABLED 或 DISABLED"
 	}
 	if len(fields) > 0 {
-		return validation.BodyValidationError(fields)
+		return usersvc.UpdateUserStatusCommand{}, validation.BodyValidationError(fields)
 	}
-	return nil
+	return usersvc.UpdateUserStatusCommand{
+		UserID: userID,
+		Status: string(request.Status),
+	}, nil
 }
 
-func parseIntQuery(values url.Values, name string, defaultValue int, fields validation.FieldErrors) int {
-	raw := strings.TrimSpace(values.Get(name))
-	if raw == "" {
-		return defaultValue
+func parseTimeParam(rawValue *string, name string, fields validation.FieldErrors) *time.Time {
+	if rawValue == nil {
+		return nil
 	}
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		fields[name] = name + " 必须是整数"
-		return defaultValue
-	}
-	return value
-}
-
-func parseTimeQuery(values url.Values, name string, fields validation.FieldErrors) *time.Time {
-	raw := strings.TrimSpace(values.Get(name))
+	raw := strings.TrimSpace(*rawValue)
 	if raw == "" {
 		return nil
 	}
@@ -100,12 +111,4 @@ func parseTimeQuery(values url.Values, name string, fields validation.FieldError
 		return nil
 	}
 	return &parsed
-}
-
-func queryValidationError(fields validation.FieldErrors) *apperror.AppError {
-	return apperror.WithData(
-		apperror.CommonValidation,
-		"请求参数校验失败",
-		fields,
-	)
 }

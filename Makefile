@@ -4,9 +4,10 @@ KIN_OPENAPI_VERSION ?= v0.131.0
 REDOCLY_CLI_VERSION ?= 2.35.1
 OASDIFF_VERSION ?= v1.21.0
 OPENAPI_SPEC := api/openapi/eventhub.yaml
-OAPI_CODEGEN_CONFIG := api/openapi/oapi-codegen.yaml
+OAPI_CODEGEN_MODELS_CONFIG := api/openapi/oapi-codegen.models.yaml
+OAPI_CODEGEN_SERVER_CONFIG := api/openapi/oapi-codegen.server.yaml
 OPENAPI_LINT_CONFIG := redocly.yaml
-OPENAPI_GEN := api/openapi/gen/eventhub.gen.go
+OPENAPI_GEN := api/openapi/gen/models.gen.go api/openapi/gen/server.gen.go
 OPENAPI_BASE_REF ?= origin/main
 OPENAPI_BREAKING_MATCH_PATH ?= ^/api/v1($$|/)
 
@@ -94,12 +95,13 @@ openapi-validate:
 
 openapi-generate:
 	mkdir -p api/openapi/gen
-	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) -config $(OAPI_CODEGEN_CONFIG) $(OPENAPI_SPEC)
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) -config $(OAPI_CODEGEN_MODELS_CONFIG) $(OPENAPI_SPEC)
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) -config $(OAPI_CODEGEN_SERVER_CONFIG) $(OPENAPI_SPEC)
 
 openapi-check:
 	$(MAKE) openapi-validate
 	$(MAKE) openapi-generate
-	git diff --exit-code $(OPENAPI_GEN)
+	git diff --exit-code -- $(OPENAPI_GEN)
 
 openapi-breaking-check:
 	@# 输出流处理原则：只丢弃该 Git 命令在当前检查场景中会产生、且会干扰 Make 输出的那一路。

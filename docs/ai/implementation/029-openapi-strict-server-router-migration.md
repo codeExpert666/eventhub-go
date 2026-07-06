@@ -1,0 +1,221 @@
+# OpenAPI Strict Server Router Migration 实现说明
+
+## 1. 本次改动解决了什么问题
+
+本次把 Go 版运行时业务 API 与 actuator API 的 route source-of-truth 从手写 `internal/http/router.go` 迁移到 `api/openapi/eventhub.yaml` 生成的 chi strict server wrapper。
+
+迁移前，`eventhub.yaml`、generated chi server interface 和手写 router 并存，因此需要 `internal/http/router_contract_test.go` 与 `internal/http/openapi_contract_test.go` 这类补救型测试防止漂移。迁移后，生产 router 由 generated `HandlerWithOptions(NewStrictHandlerWithOptions(...))` 注册 OpenAPI 声明的 routes，手写 route list 被移除，两个补救型测试也随之删除。
+
+## 2. 改动内容
+- 新增了什么
+  - `internal/http/openapi_adapter.go`
+    - 新增生产 `gen.StrictServerInterface` 私有聚合适配器 `openAPIAdapter`。
+    - 聚合 system/auth/user handler，不承载 service 或 repository 业务规则。
+  - `internal/http/handler/system/strict.go`
+    - 新增 system 与 actuator strict 方法，映射 `Ping/Echo/Health/Info` request/response object。
+  - `internal/http/handler/auth/strict.go`
+    - 新增 register/login/refresh/logout strict 方法，直接校验 generated request model，映射到 service Command 和 generated response。
+  - `internal/http/handler/user/strict.go`
+    - 新增 me/admin user strict 方法，直接使用 generated query/path/body model，映射到 service Query/Command 和 generated response。
+  - `internal/http/handler/system/validation.go`
+    - 从 `system/handler.go` 拆出 `validateEchoRequest`，让 strict 入口继续复用原字段校验，同时避免 constructor 文件继续承载 direct `net/http` 方法。
+  - `internal/http/response/response.go`
+    - 新增并收敛 `Meta`、`SuccessMeta`、`WriteError`，让 strict handler 复用统一 `code/message/requestId/timestamp`，并让 router、middleware、docs handler 通过一个入口写出 OpenAPI generated `ErrorResponse`。
+    - 将错误响应构造 helper 保持为包内私有，不再向外暴露只服务于 `WriteError` 的 `ErrorMeta` / `ErrorBody`。
+  - `internal/http/openapi_routes.go`
+    - 新增 strict-server runtime route adapter。
+    - 集中放置 generated strict server 接入、OpenAPI BearerAuth/Admin middleware 适配、strict request/response/parameter error handler。
+  - `docs/ai/design/029-openapi-strict-server-router-migration.md`。
+  - `docs/ai/adr/0025-openapi-strict-server-runtime-router.md`。
+- 修改了什么
+  - `api/openapi/oapi-codegen.yaml`
+    - 增加 `generate.strict-server: true`。
+  - `api/openapi/gen/eventhub.gen.go`
+    - 由 `oapi-codegen v2.5.0` 重新生成，新增 strict server request/response object、`StrictServerInterface`、`NewStrictHandler` 和 strict middleware 支持。
+  - `internal/http/router.go`
+    - 删除 `/api/**` 与 `/actuator/**` 手写注册。
+    - 改为通过 `registerOpenAPIRoutes` 使用 generated chi strict server wrapper 注册 OpenAPI 声明 route。
+    - 保留 request id / recover、OpenAPI docs routes、NotFound/MethodNotAllowed。
+    - strict-server 相关的 OpenAPI security middleware、generated 参数绑定错误和 strict body decode error handler 已拆到 `internal/http/openapi_routes.go`，让 router 主流程只表达装配顺序。
+  - `internal/apperror/error.go`
+    - 将 `AppError` 的结构化上下文从 `data any` 改为 `details Details`。
+    - 将 `WithData/Data` 改名为 `WithDetails/Details`。
+  - `internal/http/response/{meta.go,error.go,writer.go}`
+    - 删除 success/status/generic JSON writer 对外 API，并将 response 包文件收敛为单个 `response.go`。
+    - `WriteError` 通过 generated `ErrorResponse` 写出统一错误 envelope，错误 body 构造不再作为外部 API 暴露。
+  - `internal/http/validation/request_error.go`
+    - 将 malformed body 构造函数导出为 `MalformedBodyError`，供 strict request error handler 复用。
+    - 删除旧 `DecodeJSONBody`，因为生产 body decode 已由 generated strict handler 负责。
+    - `FieldErrors` 改为 `apperror.Details` 的别名，统一错误详情结构。
+    - 2026-07-05 后续错误边界整理将原 `json.go` 重命名为 `request_error.go`，并新增 `ParameterValidationError` 统一 query/path 参数校验错误。
+  - `internal/apperror/mapper.go`
+    - 2026-07-05 后续错误边界整理新增 `FromErrorOrInternal`，接管原 `validation.AppErrorFromError` 的普通错误兜底收敛职责。
+  - `internal/http/router_test.go`
+    - 新增红绿测试 `TestOpenAPIDeclaredRoutesUseGeneratedStrictRouter`，证明 OpenAPI 声明 route 已由 generated strict router 接管。
+  - `internal/app/providers/http_test.go`
+    - 将无数据库测试语义从“只注册 system route”更新为“OpenAPI route 已注册，但缺少模块能力时合法业务请求返回 `COMMON-404`”。
+  - `internal/http/handler/system/handler.go`
+    - 删除旧 direct `Ping/Echo/Health/HealthHead/Info/InfoHead` 方法，只保留 `Handler` 与 `NewHandler`。
+  - `internal/http/handler/user/admin_validation.go`
+    - 接收 `parseUserIDParam`，让 admin path 参数校验继续服务于 strict handler。
+    - 列表查询和状态更新校验从 HTTP DTO 改为 service query / generated request model。
+  - `internal/http/handler/{auth,system}/validation.go`
+    - 校验函数从项目 HTTP DTO 改为直接接收 generated request model。
+  - `AGENTS.md`、`docs/ai/README.md`
+    - 将 HTTP DTO/response 规范更新为 OpenAPI generated model 优先、DTO 例外化、response package 只保留 meta/error 写出能力。
+  - `docs/ai/parity/java-go-parity-matrix.md`
+    - 更新 OpenAPI / Swagger 行，记录 strict-server runtime source-of-truth、旧补救型测试删除和保留的 OpenAPI gates。
+- 删除了什么
+  - `internal/http/handler/api/server.go`
+    - 非业务模块聚合文件已移动到 `internal/http/openapi_adapter.go`，避免在 `handler` 下新增并非业务模块的 `api` 子包。
+  - `internal/http/openapi_strict.go`
+    - 已重命名为 `internal/http/openapi_routes.go`，让文件名直接表达 route registration 职责。
+  - `internal/http/router_contract_test.go`
+  - `internal/http/openapi_contract_test.go`
+  - `internal/http/handler/auth/{register,login,refresh,logout,mapping}.go`
+    - strict-server 已接管 register/login/refresh/logout 生产 HTTP 入口，旧 direct `net/http` 方法和 direct DTO response mapper 不再被生产 router 使用。
+  - `internal/http/handler/user/{me,admin_users,mapping}.go`
+    - strict-server 已接管 me/admin user 生产 HTTP 入口；仍被 strict 复用的 `parseUserIDParam` 移入 `admin_validation.go`。
+  - `internal/http/dto/system/{request,response}.go`
+  - `internal/http/dto/auth/{request,response}.go`
+  - `internal/http/dto/user/{request,response}.go`
+    - 这些类型与 OpenAPI generated request/response model 重复，已由 strict handler 直接使用 generated model 替代。
+  - `internal/http/response/api_response.go`
+    - 项目自有 `APIResponse{Data any}`、`Success`、`SuccessContext`、`Failure` 已删除，避免与 generated `ApiResponseXxx`/`ErrorResponse` 双轨。
+- 是否更新 Java-Go parity 记录
+  - 已更新。原因是本次改变 Go 版 API path/method 的运行时事实来源、测试策略和 OpenAPI 生成链路，是 Java-Go 契约治理差异的重要索引。
+  - 2026-07-05 的后续文件边界整理已同步更新 parity matrix。原因是虽然 API 契约、错误码和安全语义不变，但 Go 端刻意选择了 `internal/http/openapi_adapter.go` + `internal/http/openapi_routes.go` 的文件边界，而不是新增 `internal/http/handler/api` 非业务子包；这是值得在 Java-Go 对齐索引里保留的 Go 结构差异。
+  - 2026-07-05 的 direct handler 清理也同步更新 parity matrix。原因是 API 契约、错误码和权限语义不变，但 Go 端生产 HTTP 入口刻意收敛到 generated strict server，不再保留与 strict 并行的 direct `net/http` handler 方法。
+  - 2026-07-05 的 response/AppError/HTTP DTO 收敛也同步更新 parity matrix。原因是 Go 端刻意让 OpenAPI generated model 承载 HTTP 成功 envelope 和请求/响应传输模型，同时保留 Java `ApiResponse`/错误码的外部字段语义。
+
+## 3. 为什么这样设计
+- 关键设计原因
+  - 让 `eventhub.yaml` 通过 generated code 直接驱动生产 route registration，消除手写业务 route list 与 OpenAPI paths/methods 并行维护。
+  - `internal/http/openapi_adapter.go` 中的 `openAPIAdapter` 是生产调用链入口，不是只做编译覆盖检查的 adapter；它真正被 `router.go` 交给 generated wrapper 使用。
+  - module handler 继续负责 generated request/response object 与 service Command/Query/Result 的映射，保持 handler -> service -> repository -> sqlc/database 分层。
+  - auth/RBAC middleware 放在 generated chi wrapper 的 handler middleware 阶段，利用 generated BearerAuth context 判断受保护 operation，并保证认证在 strict body decode 前执行。
+  - OpenAPI docs routes 继续手写注册，因为它们受 `OPENAPI_ENABLED` 控制，不属于业务 API strict-server 范围。
+  - strict-server route adapter 与 strict interface adapter 都与 `router.go` 保持同 package 分文件，避免为了可读性整理引入新的跨 package API 或依赖边界；同时不把非业务聚合职责放入 `handler` 目录。
+  - 各业务 handler 子包继续保留模块边界；删除的是旧 direct `net/http` 入口文件，而不是把 auth/system/user 摊平成根 package。这样既去掉并行 HTTP 入口，也避免违反现有 handler 模块化规则。
+  - 校验和 path/query 解析 helper 保留为独立文件。strict 方法仍负责 request object 到 service Command/Query 的映射，helper 文件负责字段约束，`handler.go` 只保留依赖字段和构造函数。
+  - `response.SuccessMeta` 只复用 envelope 元数据，不再把 typed data 包进项目自有 `any` 容器；这让成功响应的数据类型以 OpenAPI schema/generated code 为准。
+  - `response.WriteError` 保留在 `internal/http/response`，因为 router、middleware 和 docs handler 仍需要一个不依赖 strict handler 返回值的统一错误写出入口。
+  - `ErrorMeta` / `ErrorBody` 没有独立业务语义，且外部没有调用；将它们收敛为私有 helper 后，response 包对外只表达两个真实能力：成功 meta 和统一错误写出。
+  - `AppError.Details` 固定为 `map[string]any`，与 generated `ErrorResponse.data` 的 object 形态对齐，避免业务错误重新携带任意类型的 `data any`。
+- 与 Go 项目当前阶段的匹配点
+  - 没有新增重依赖。
+  - 没有新增 `api/openapi/genstrict` 或实验链路。
+  - 没有修改 service/domain/repository/sqlc 边界。
+  - 保留 `openapi-lint`、`openapi-validate`、`openapi-check`、`openapi-breaking-check` 和 `openapi_policy_test.go` 的职责边界。
+- 与 Java 版业务语义的对齐方式
+  - Java Spring MVC controller mapping 与 Springdoc 契约更靠近同一套框架元数据；Go 版通过 spec-first YAML + generated strict server 达成等价的 route source-of-truth。
+  - API path、method、请求字段、响应 envelope、错误码、JWT claim 边界、RBAC 和分页语义保持不变。
+
+## 4. 替代方案
+- 方案 A：新增编译期 adapter，继续用手写 router。
+  - 没有采用。它只能证明某个类型满足 generated interface，不能让运行时 router 由 OpenAPI generated code 驱动。
+- 方案 B：保留手写 router 和两个补救型 contract tests。
+  - 没有采用。测试可以发现漂移，但不能消除双源维护。
+- 方案 C：新增 `api/openapi/genstrict` 实验目录，双链路评估后再切换。
+  - 没有采用。用户明确要求一次性迁移生产 router，不保留实验链路。
+- 方案 D：引入完整运行时 OpenAPI request validation middleware。
+  - 没有采用。本次目标是 route source-of-truth 迁移；request validation 会扩大运行时失败语义变化面。后续如需要，应单独设计并验证错误码兼容。
+- 方案 E：保留 `internal/http/dto` 和项目自有 `APIResponse`，只在 strict handler 两侧继续做 DTO/envelope 转换。
+  - 没有采用。strict server 已生成适用的 HTTP request/response model；继续保留镜像 DTO 和 `APIResponse{Data any}` 会让业务层继续承担无意义的结构转换。
+
+## 5. 测试与验证
+- 跑了哪些测试
+  - RED：`go test ./internal/http -run TestOpenAPIDeclaredRoutesUseGeneratedStrictRouter -count=1`
+    - 失败：旧 router 返回 `COMMON-404`，证明 auth route 没有由 OpenAPI generated route 注册。
+  - GREEN：同一命令通过。
+  - `go test ./internal/http -count=1`：通过。
+  - `go test ./internal/app/providers -count=1`：通过。
+  - `go test ./...`：通过。
+  - 2026-07-05 文件边界整理后再次运行 `go test ./internal/http -count=1` 与 `go test ./...`：通过。
+  - 2026-07-05 direct handler 清理后运行 `go test ./internal/http/handler/... ./internal/http -count=1`：通过。
+  - RED：`go test ./internal/apperror ./internal/http/response -count=1`
+    - 失败：旧代码没有 `apperror.Details`、`WithDetails`、`Details`、`response.SuccessMeta` 和 `response.ErrorBody`。
+  - GREEN：同一命令通过。
+  - 2026-07-05 response 包公共面收敛前新增架构测试后运行 `go test ./internal/http/response -count=1`：
+    - 失败：`TestPublicSurfaceStaysFocused` 发现导出函数仍包含 `ErrorBody` 和 `ErrorMeta`，而目标公共函数只有 `SuccessMeta` 和 `WriteError`。
+  - 2026-07-05 response 包公共面收敛后运行 `gofmt -w internal/http/response/response.go internal/http/response/response_test.go && go test ./internal/http/response -count=1`：通过。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `go test ./internal/apperror ./internal/http/response ./internal/http/validation -count=1`：通过。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `go test ./internal/http/handler/... ./internal/http -count=1`：通过。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `go test ./...`：通过。
+  - 2026-07-05 response 包公共面最终收敛后再次运行 `go test ./...`：通过。
+- 跑了哪些质量门禁，例如 `gofmt`、`go test ./...`、`go vet ./...`、`sqlc generate`
+  - `gofmt -w ...`：已对修改的 Go 文件运行。
+  - `go vet ./...`：通过。
+  - `golangci-lint run ./...`：通过，输出 `0 issues.`。
+  - 2026-07-05 文件边界整理后再次运行 `go vet ./...`、`golangci-lint run ./...`、`git diff --check`：通过。
+  - 2026-07-05 direct handler 清理后再次运行 `go test ./...`、`go vet ./...`、`golangci-lint run ./...`、`git diff --check`：通过；其中 lint 输出 `0 issues.`。
+  - 2026-07-05 response/AppError/DTO 收敛后再次运行 `gofmt -w ...`：已对修改的 Go 文件运行。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `go vet ./...`：通过。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `golangci-lint run ./...`：通过，输出 `0 issues.`。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `git diff --check`：通过。
+  - 2026-07-05 response 包公共面最终收敛后再次运行 `go vet ./...`：通过。
+  - 2026-07-05 response 包公共面最终收敛后再次运行 `golangci-lint run ./...`：通过，输出 `0 issues.`。
+  - 2026-07-05 response 包公共面最终收敛后再次运行 `git diff --check`：通过。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `make openapi-lint`：通过，Redocly 认为 `eventhub.yaml` valid。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `make openapi-breaking-check`：通过，输出 `No changes detected`。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `make openapi-check`：`openapi-validate` 与 `openapi-generate` 阶段通过，仍停在 `git diff --exit-code api/openapi/gen/eventhub.gen.go`，原因是 strict-server generated code diff 是当前未提交迁移内容。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `make quality-check`：`make fmt` 执行完成，仍停在 `fmt-check` 的 `git diff --exit-code -- '*.go'`，原因是当前工作树包含本次预期 Go diff。已单独运行 `go test ./...`、`go vet ./...`、`golangci-lint run ./...` 与 `git diff --check`，均通过。
+  - `make openapi-lint`：通过，Redocly 认为 `eventhub.yaml` valid。
+  - `make openapi-validate`：通过。
+  - `make openapi-breaking-check`：通过，输出 `No changes detected`。
+  - `make openapi-generate`：通过；重新生成前后 `api/openapi/gen/eventhub.gen.go` SHA-256 均为 `d74485033bd25b1c5e134e6bf278653017baf1d7462409a987437c64caec9fc5`，确认没有额外生成漂移。
+  - `make openapi-check`：已运行，`openapi-validate` 与 `openapi-generate` 阶段通过；因当前工作树存在本次预期的 generated file diff，停在 `git diff --exit-code api/openapi/gen/eventhub.gen.go`，不是 OpenAPI validate 或 generate 失败。
+  - `make quality-check`：已运行，`make fmt` 执行完成；因当前工作树存在本次预期的 Go 文件 diff，停在 `fmt-check` 的 `git diff --exit-code -- '*.go'`，不是 gofmt 失败。后续 `go test ./...`、`go vet ./...` 与 `golangci-lint run ./...` 已单独重跑通过。
+  - 2026-07-05 direct handler 清理后再次运行 `make openapi-check`：`openapi-validate` 与 `openapi-generate` 阶段通过，仍停在 `git diff --exit-code api/openapi/gen/eventhub.gen.go`，原因是 strict-server generated code diff 仍是当前未提交迁移内容。
+  - 2026-07-05 direct handler 清理后再次运行 `make quality-check`：`make fmt` 执行完成，仍停在 `fmt-check` 的 `git diff --exit-code -- '*.go'`，原因是当前工作树包含本次预期 Go diff。`make quality-check` 执行 `gofmt -w .` 后，已重新单独运行 `go test ./...`、`go vet ./...`、`golangci-lint run ./...` 与 `git diff --check`，均通过。
+  - `sqlc generate`：不运行；本次没有 SQL、schema 或 sqlc 配置变化。
+  - migration 测试：不运行；本次没有 migration 变化。
+- 手工验证了哪些场景
+  - 检查 `internal/http/router.go`，确认业务和 actuator route registration 只通过 generated `HandlerWithOptions` 进入 chi router。
+  - 检查 `internal/http/router.go`，确认 strict-server route adapter 已收敛到 `registerOpenAPIRoutes`，docs route 和 404/405 兜底仍留在 router 主流程。
+  - 检查 `internal/http/openapi_adapter.go`，确认 generated `StrictServerInterface` 聚合适配器已从 `handler/api` 移到 `internal/http`，且保持私有类型。
+  - 检查 `internal/http/handler/{auth,system,user}`，确认旧 direct `net/http` 方法已删除，strict handler 仍复用必要的校验和 principal/path/query helper。
+  - 检查 `internal/http/handler/{auth,system,user}`，确认 strict handler 已直接使用 generated request/response model，不再依赖 `internal/http/dto`。
+  - 检查 `internal/http/response`，确认对外成功 writer、项目自有 `APIResponse`、`ErrorMeta` 和 `ErrorBody` 已删除，公共 API 只保留 `Meta`、`SuccessMeta`、`WriteError`，错误写出使用 generated `ErrorResponse`。
+  - 检查 `internal/apperror` 与 `internal/http/validation`，确认结构化错误详情统一为 `Details`。
+  - 检查没有新增 `api/openapi/genstrict`。
+  - 检查 `internal/http/router_contract_test.go` 和 `internal/http/openapi_contract_test.go` 已删除。
+  - 检查 OpenAPI docs/static assets routes 仍受 `deps.OpenAPI` 控制。
+- Java-Go parity 如何验证
+  - 对照 Java controller/Springdoc/Actuator 语义，确认本次不改 API 契约字段和业务失败语义。
+  - 更新 parity matrix 的 OpenAPI / Swagger 行，索引 design/implementation 029 和 ADR-0025。
+- 结果如何
+  - 生产 router 已由 generated chi strict server wrapper 接管 OpenAPI 声明的业务与 actuator routes。
+  - strict-server runtime route adapter 已从 `router.go` 主流程拆到 `internal/http/openapi_routes.go`，strict interface 聚合适配器已移动到 `internal/http/openapi_adapter.go`，行为由既有 HTTP 测试覆盖。
+  - 各业务 handler 子包的生产 HTTP 入口已收敛到 `strict.go`，旧 direct `net/http` 文件已移除；API 契约和错误语义不变。
+  - 业务 HTTP DTO 镜像类型已删除，strict handler 直接使用 generated model；service/domain/repository 仍不依赖 generated model。
+  - `internal/http/response` 已收敛为 success meta 与 error writer，成功 envelope 由 generated typed response 表达，错误 body 构造保持包内私有。
+  - `AppError` 已从 `data any` 收敛为 `Details map[string]any`。
+  - 旧补救型 contract tests 已删除。
+  - OpenAPI policy/lint/validate/generate/breaking gates 继续保留。
+
+## 6. 已知限制
+- 当前版本还缺什么
+  - strict-server 不等于完整 incoming request validation。当前仍依赖 handler/service 校验来保持字段级失败语义。
+  - 生成的 strict body decode 已替代旧 `DecodeJSONBody`；本次通过 request error handler 保持 malformed JSON 的统一 envelope，未来如要覆盖更细的 schema validation，应单独设计。
+- 哪些地方后面需要继续演进
+  - 可评估基于 OpenAPI 的 request validation，但必须先设计错误码、错误消息和 Java-Go parity 兼容策略。
+  - 随 event/order/payment API 增加，新增 endpoint 应先进入 `eventhub.yaml`，再由 generated strict server 接入 runtime router。
+  - 后续如确实遇到 generated model 不适合承载的非 OpenAPI HTTP 面，可局部引入 `internal/http/dto/<module>`，但必须说明原因和生命周期。
+  - direct `net/http` 入口删除后，新 handler 测试应优先通过 router 或 strict 方法覆盖，不再直接调用旧 `func(w, r)` 方法。
+- 与 Java 版仍有哪些差距
+  - Java 仍是 Spring MVC + Springdoc 注解扫描；Go 是 spec-first YAML + generated strict server。
+  - Go docs route 的 prod 关闭语义仍保持 `COMMON-404`，不复刻 Java Spring Security 对 docs path 的 `AUTH-401` 过渡行为。
+
+## 7. 对后续版本的影响
+- 对简历可用版的价值
+  - 展示 spec-first OpenAPI 不只生成文档，还能驱动生产 router，减少契约漂移。
+- 对微服务 / 云原生演进的影响
+  - 后续拆分服务、生成 SDK、接入网关或做 API compatibility review 时，`eventhub.yaml` 的权威性更强。
+- 对后续 Go package、migration、sqlc、OpenAPI 或测试策略的影响
+  - 新增 API 时不应手写 chi 业务 route，而应更新 OpenAPI spec、生成代码并实现 strict handler。
+  - 新增或调整业务 handler 时，`handler.go` 保持 constructor/依赖字段，生产 HTTP 入口放 `strict.go`，字段校验或 path/query 解析按需要拆到模块内 helper 文件。
+  - 新增成功响应时，优先在 OpenAPI schema 中定义 typed envelope 并重新生成代码；handler 使用 `response.SuccessMeta` 填充公共元数据。
+  - 新增错误详情时，使用 `apperror.Details`，不要恢复任意 `data any`。
+  - OpenAPI docs/static assets route 仍在 router 外围按配置注册。
+  - migration、sqlc、repository 不受本次迁移影响。

@@ -3,6 +3,7 @@ package openapi
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -51,6 +52,33 @@ func TestOpenAPIPolicy(t *testing.T) {
 	}
 
 	assertAuthSecurityPolicy(t, operations)
+}
+
+// TestOpenAPIGeneratedFilesAreSplit 固化 oapi-codegen 生成物的可读性边界。
+//
+// HTTP 层仍统一 import eventhub-go/api/openapi/gen；这里仅约束物理文件布局：
+// models.gen.go 放 schema/request/response model，server.gen.go 放 chi/strict server wrapper。
+// 旧 eventhub.gen.go 不能残留，否则会和拆分后的同 package 类型重复声明。
+func TestOpenAPIGeneratedFilesAreSplit(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate OpenAPI policy test file")
+	}
+
+	genDir := filepath.Join(filepath.Dir(currentFile), "gen")
+	for _, name := range []string{"models.gen.go", "server.gen.go"} {
+		path := filepath.Join(genDir, name)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected generated file %s: %v", path, err)
+		}
+	}
+
+	legacyFile := filepath.Join(genDir, "eventhub.gen.go")
+	if _, err := os.Stat(legacyFile); err == nil {
+		t.Fatalf("legacy generated file %s must be removed after splitting OpenAPI generated output", legacyFile)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat legacy generated file %s: %v", legacyFile, err)
+	}
 }
 
 // TestSchemaUsesTopLevelComponentRequiresEnvelope 固化统一响应 envelope 的“顶层”判断口径。

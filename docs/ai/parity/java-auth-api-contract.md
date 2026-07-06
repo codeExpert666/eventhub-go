@@ -354,7 +354,7 @@ Java 通过 Springdoc 从 Controller 注解和 DTO schema 生成 OpenAPI：
 Go 当前已建立 spec-first OpenAPI：
 
 - 契约源：`api/openapi/eventhub.yaml`
-- 生成代码：`api/openapi/gen/eventhub.gen.go`
+- 生成代码：`api/openapi/gen/{models.gen.go,server.gen.go}`
 - 文档入口：`GET /openapi.yaml`、`GET /swagger/*`
 - dev/test 默认 `OPENAPI_ENABLED=true`，prod 默认 `OPENAPI_ENABLED=false`
 - 禁用时不注册文档入口，统一返回 `COMMON-404`

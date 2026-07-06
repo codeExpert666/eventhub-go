@@ -16,7 +16,7 @@ import (
 	"eventhub-go/internal/platform/clock"
 )
 
-func TestProviderHTTPRegistersOnlySystemRoutesWithoutDatabase(t *testing.T) {
+func TestProviderHTTPRegistersOpenAPIRoutesWithoutDatabase(t *testing.T) {
 	t.Parallel()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -41,7 +41,15 @@ func TestProviderHTTPRegistersOnlySystemRoutesWithoutDatabase(t *testing.T) {
 	}
 
 	assertStatus(t, httpDeps.Router, http.MethodGet, "/api/v1/system/ping", http.StatusOK)
-	assertErrorCode(t, httpDeps.Router, http.MethodPost, "/api/v1/auth/login", http.StatusNotFound, "COMMON-404")
+	assertErrorCodeWithBody(
+		t,
+		httpDeps.Router,
+		http.MethodPost,
+		"/api/v1/auth/login",
+		`{"usernameOrEmail":"alice","password":"Password123"}`,
+		http.StatusNotFound,
+		"COMMON-404",
+	)
 	assertErrorCode(t, httpDeps.Router, http.MethodGet, "/api/v1/me", http.StatusNotFound, "COMMON-404")
 }
 
@@ -221,6 +229,20 @@ func assertErrorCode(t *testing.T, handler http.Handler, method, path string, st
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(method, path, nil))
+	assertErrorRecorder(t, method, path, recorder, status, code)
+}
+
+func assertErrorCodeWithBody(t *testing.T, handler http.Handler, method, path string, requestBody string, status int, code string) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, strings.NewReader(requestBody))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+	assertErrorRecorder(t, method, path, recorder, status, code)
+}
+
+func assertErrorRecorder(t *testing.T, method, path string, recorder *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
 	if recorder.Code != status {
 		t.Fatalf("%s %s status: got %d want %d body=%s", method, path, recorder.Code, status, recorder.Body.String())
 	}

@@ -1,0 +1,9 @@
+# EventHub OpenAPI server 生成配置。
+# 只生成 chi wrapper 与 strict-server glue，依赖同 package 下 models.gen.go 中的 model 类型。
+package: gen
+
+generate:
+  chi-server: true
+  strict-server: true
+
+output: api/openapi/gen/server.gen.go

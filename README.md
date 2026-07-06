@@ -161,7 +161,7 @@ OpenAPI 相关门禁分工：
 
 - `make openapi-lint`：使用固定版本 Redocly CLI 检查通用 OpenAPI 文档质量，例如 operationId、tags、summary、schema 示例和未使用组件提示。
 - `make openapi-validate`：使用 kin-openapi 检查 OpenAPI 结构、引用和 schema 合法性。
-- `make openapi-check`：串联 validate、oapi-codegen generate 和 generated file diff，确认契约和生成代码没有漂移。
+- `make openapi-check`：串联 validate、oapi-codegen generate 和 generated file diff，确认契约和生成代码没有漂移；OpenAPI 生成物按职责拆为 `api/openapi/gen/models.gen.go` 和 `api/openapi/gen/server.gen.go`。
 - `make openapi-breaking-check`：使用固定版本 oasdiff 比较 base ref 与当前工作区的 `api/openapi/eventhub.yaml`，阻断 `/api/v1/**` breaking changes；本地默认 base ref 是 `origin/main`，缺失时先执行 `git fetch origin main`。
 - `go test ./...`：包含项目自定义 OpenAPI policy test，检查统一响应 envelope、错误响应集中引用、RBAC 文档元数据、router/spec 对齐和真实响应契约。
 

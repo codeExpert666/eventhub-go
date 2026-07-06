@@ -39,48 +39,20 @@ func NewRouter(logger *slog.Logger, deps RouterDependencies) http.Handler {
 	router.Use(middleware.RequestID(logger))
 	router.Use(middleware.Recover(logger))
 
-	if deps.System != nil {
-		// /api/v1 前缀用于业务 API，保持版本化入口，便于后续在不破坏旧客户端的前提下演进契约。
-		router.Get("/api/v1/system/ping", deps.System.Ping)
-		router.Post("/api/v1/system/echo", deps.System.Echo)
+	// OpenAPI routes 是业务 API 与 actuator API 的运行时入口。
+	// router 主流程只接入 generated chi wrapper；具体的 strict-server 适配、认证编排和错误映射
+	// 收敛在 openapi_routes.go，避免这里重新维护 eventhub.yaml 已声明的 path/method 细节。
+	registerOpenAPIRoutes(router, deps)
 
-		// /actuator/* 保留 Spring Boot Actuator 风格的运维端点命名，方便和 Java 版部署、监控习惯对齐。
-		router.Get("/actuator/health", deps.System.Health)
-		// HEAD 端点只返回状态码和响应头，供负载均衡或监控探针做轻量可达性检查。
-		router.Head("/actuator/health", deps.System.HealthHead)
-		router.Get("/actuator/info", deps.System.Info)
-		router.Head("/actuator/info", deps.System.InfoHead)
-	}
-
+	// OpenAPI / Swagger 文档入口受 OPENAPI_ENABLED 控制，不属于 strict-server 的业务 API 契约。
+	// Provider 未传入 OpenAPI handler 时不注册这些路由，请求会继续落入统一 NotFound，
+	// 保持 prod 默认隐藏文档入口并返回 COMMON-404 的行为。
 	if deps.OpenAPI != nil {
 		router.Get("/openapi.yaml", deps.OpenAPI.YAML)
 		router.Get("/swagger", deps.OpenAPI.RedirectSwagger)
 		router.Get("/swagger/", deps.OpenAPI.SwaggerUI)
 		router.Get("/swagger/index.html", deps.OpenAPI.SwaggerUI)
 		router.Get("/swagger/*", deps.OpenAPI.SwaggerAsset)
-	}
-
-	if deps.Auth != nil {
-		router.Post("/api/v1/auth/register", deps.Auth.Register)
-		router.Post("/api/v1/auth/login", deps.Auth.Login)
-		router.Post("/api/v1/auth/refresh", deps.Auth.Refresh)
-	}
-
-	if deps.Authenticate != nil {
-		router.Group(func(protected chi.Router) {
-			protected.Use(deps.Authenticate)
-			if deps.Auth != nil {
-				protected.Post("/api/v1/auth/logout", deps.Auth.Logout)
-			}
-			if deps.User != nil {
-				protected.Get("/api/v1/me", deps.User.Me)
-				protected.Group(func(admin chi.Router) {
-					admin.Use(middleware.RequireRole("ADMIN"))
-					admin.Get("/api/v1/admin/users", deps.User.ListUsers)
-					admin.Patch("/api/v1/admin/users/{userId}/status", deps.User.UpdateStatus)
-				})
-			}
-		})
 	}
 
 	// chi 会区分“路径不存在”和“路径存在但 HTTP 方法不支持”。

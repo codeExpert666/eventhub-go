@@ -174,9 +174,9 @@ func normalizeEmailFilter(value string) string {
 }
 
 func validationError(field, message string) *apperror.AppError {
-	return apperror.WithData(
+	return apperror.WithDetails(
 		apperror.CommonValidation,
 		"请求参数校验失败",
-		map[string]string{field: message},
+		apperror.Details{field: message},
 	)
 }
