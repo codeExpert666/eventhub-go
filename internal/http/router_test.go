@@ -17,6 +17,7 @@ import (
 	openapispec "eventhub-go/api/openapi"
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
+	"eventhub-go/internal/http/contract"
 	openapihandler "eventhub-go/internal/http/handler/openapi"
 	systemhandler "eventhub-go/internal/http/handler/system"
 	"eventhub-go/internal/http/middleware"
@@ -321,6 +322,117 @@ func TestOpenAPIDeclaredRoutesUseGeneratedStrictRouter(t *testing.T) {
 	}
 }
 
+func TestOpenAPIRequestContractGateRejectsInvalidQueryBeforeSecurity(t *testing.T) {
+	recorder := performRequest(testRouterWithRequestContract(t), nethttp.MethodGet, "/api/v1/admin/users?page=0", nil, nil)
+
+	assertValidationError(t, recorder, "请求参数校验失败")
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if _, ok := data["page"]; !ok {
+		t.Fatalf("expected page field error, got %#v", data)
+	}
+}
+
+func TestOpenAPIRequestContractGateRejectsInvalidPathBeforeSecurity(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPatch,
+		"/api/v1/admin/users/not-a-number/status",
+		[]byte(`{"status":"ENABLED"}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertValidationError(t, recorder, "请求参数校验失败")
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if _, ok := data["userId"]; !ok {
+		t.Fatalf("expected userId field error, got %#v", data)
+	}
+}
+
+func TestOpenAPIRequestContractGateRejectsUnsupportedContentType(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{"message":"hello eventhub"}`),
+		map[string]string{"Content-Type": "text/plain"},
+	)
+
+	assertValidationError(t, recorder, "请求内容类型不支持")
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if data["Content-Type"] != "text/plain" {
+		t.Fatalf("unexpected content-type field error: %#v", data)
+	}
+}
+
+func TestOpenAPIRequestContractGateRejectsMalformedJSON(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{"message":"hello"`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertValidationError(t, recorder, "请求体格式不合法")
+}
+
+func TestOpenAPIRequestContractGateRejectsRequiredRequestBody(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		nil,
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertValidationError(t, recorder, "请求体格式不合法")
+}
+
+func TestOpenAPIRequestContractGateRejectsBodySchemaViolation(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{"message":123}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertValidationError(t, recorder, "请求体参数校验失败")
+}
+
+func TestOpenAPIRequestContractGateReplaysBodyForStrictHandler(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{"message":"hello eventhub","tag":"contract"}`),
+		map[string]string{"Content-Type": "application/json; charset=utf-8"},
+	)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeAPIResponse(t, recorder)
+	data := body["data"].(map[string]any)
+	if data["message"] != "hello eventhub" || data["tag"] != "contract" {
+		t.Fatalf("unexpected echo data after contract body replay: %#v", data)
+	}
+}
+
+func TestOpenAPIRequestContractGateCanBeDisabled(t *testing.T) {
+	recorder := performRequest(
+		testRouter(),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{"message":"hello eventhub"}`),
+		map[string]string{"Content-Type": "text/plain"},
+	)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("expected current strict-server behavior without contract gate, got status %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestMissingRouteReturnsUnifiedNotFound(t *testing.T) {
 	recorder := performRequest(testRouter(), nethttp.MethodGet, "/favicon.ico", nil, nil)
 	if recorder.Code != nethttp.StatusNotFound {
@@ -443,6 +555,24 @@ func repoOpenAPIAssetRoot() string {
 }
 
 func testRouterWithOpenAPIHandler(openAPI *openapihandler.OpenAPIHandler) nethttp.Handler {
+	return testRouterWithOpenAPIHandlerAndRequestContract(openAPI, nil)
+}
+
+func testRouterWithRequestContract(t *testing.T) nethttp.Handler {
+	t.Helper()
+
+	spec, err := contract.LoadSpec(filepath.Join("..", "..", filepath.FromSlash(openapispec.DefaultSpecPath)))
+	if err != nil {
+		t.Fatalf("load request contract spec: %v", err)
+	}
+	validator, err := contract.NewRequestValidator(spec)
+	if err != nil {
+		t.Fatalf("new request validator: %v", err)
+	}
+	return testRouterWithOpenAPIHandlerAndRequestContract(nil, validator.Middleware)
+}
+
+func testRouterWithOpenAPIHandlerAndRequestContract(openAPI *openapihandler.OpenAPIHandler, requestContract func(nethttp.Handler) nethttp.Handler) nethttp.Handler {
 	cfg := config.Config{
 		AppName: "eventhub-backend",
 		Env:     config.EnvTest,
@@ -451,8 +581,9 @@ func testRouterWithOpenAPIHandler(openAPI *openapihandler.OpenAPIHandler) nethtt
 	}
 	systemService := systemsvc.NewService(cfg, clock.RealClock{})
 	return apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
-		System:  systemhandler.NewHandler(systemService),
-		OpenAPI: openAPI,
+		System:          systemhandler.NewHandler(systemService),
+		OpenAPI:         openAPI,
+		RequestContract: requestContract,
 	})
 }
 
@@ -488,6 +619,20 @@ func decodeAPIResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[st
 		t.Fatal("expected timestamp")
 	}
 	return body
+}
+
+func assertValidationError(t *testing.T, recorder *httptest.ResponseRecorder, message string) {
+	t.Helper()
+	if recorder.Code != nethttp.StatusBadRequest {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeAPIResponse(t, recorder)
+	if body["code"] != "COMMON-400" {
+		t.Fatalf("unexpected code: %v", body["code"])
+	}
+	if body["message"] != message {
+		t.Fatalf("unexpected message: got %v want %s", body["message"], message)
+	}
 }
 
 const (

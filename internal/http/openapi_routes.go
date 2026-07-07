@@ -23,6 +23,12 @@ func registerOpenAPIRoutes(router chi.Router, deps RouterDependencies) {
 	// openAPIAdapter 聚合各业务模块 handler，实现 generated StrictServerInterface。
 	// 缺失模块能力由 adapter 返回 COMMON-404，避免 router 重新按模块维护路由表。
 	strictServer := newOpenAPIAdapter(deps.System, deps.Auth, deps.User)
+	baseRouter := router
+	if deps.RequestContract != nil {
+		// Contract gate 必须作为 chi route-level middleware 包住 generated wrapper，
+		// 才能先于 generated path/query 绑定执行完整 OpenAPI request validation。
+		baseRouter = router.With(deps.RequestContract)
+	}
 	openapigen.HandlerWithOptions(
 		openapigen.NewStrictHandlerWithOptions(
 			strictServer,
@@ -36,9 +42,9 @@ func registerOpenAPIRoutes(router chi.Router, deps RouterDependencies) {
 			},
 		),
 		openapigen.ChiServerOptions{
-			BaseRouter: router,
-			// chi wrapper middleware 运行在 strict body decode 之前，保证受保护接口先做认证/授权，
-			// 不会因为请求体格式错误而抢先返回 COMMON-400。
+			BaseRouter: baseRouter,
+			// generated middleware 仍保留现有 security 行为；本阶段 BearerAuth/x-required-roles
+			// 尚未迁入 contract gate，阶段四再接管 OpenAPI security bridge。
 			Middlewares: []openapigen.MiddlewareFunc{openAPISecurityMiddleware(deps.Authenticate)},
 			// generated chi wrapper 在执行 middleware 前绑定 path/query 参数；失败时统一写为字段级参数校验错误。
 			ErrorHandlerFunc: writeOpenAPIParameterError,

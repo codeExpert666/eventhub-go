@@ -41,3 +41,17 @@ func assertValidationError(t *testing.T, err *apperror.AppError, message, field,
 		t.Fatalf("unexpected details: %#v", err.Details())
 	}
 }
+
+func TestUnsupportedContentType(t *testing.T) {
+	err := requesterror.UnsupportedContentType("text/plain")
+
+	if err.Code() != apperror.CommonValidation {
+		t.Fatalf("unexpected code: %s", err.Code().String())
+	}
+	if err.Message() != "请求内容类型不支持" {
+		t.Fatalf("unexpected message: %s", err.Message())
+	}
+	if err.Details()["Content-Type"] != "text/plain" {
+		t.Fatalf("unexpected details: %#v", err.Details())
+	}
+}

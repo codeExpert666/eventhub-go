@@ -270,6 +270,83 @@ func TestProviderHTTPRejectsMissingOpenAPIContractWhenRequestValidationEnabled(t
 	}
 }
 
+func TestProviderHTTPAppliesOpenAPIContractWhenRequestValidationEnabled(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := config.Config{
+		AppName: "eventhub-backend",
+		Env:     config.EnvTest,
+		Port:    8080,
+		Version: "test",
+		Log:     config.LogConfig{Level: slog.LevelError},
+		OpenAPI: config.OpenAPIConfig{
+			RequestValidationEnabled: true,
+			SpecPath:                 repoProviderOpenAPISpecPath(),
+		},
+	}
+	clk := clock.RealClock{}
+	platform := PlatformDeps{Config: cfg, Logger: logger, Clock: clk}
+	system := ProviderSystem(cfg, clk)
+	user := ProviderUser(nil)
+	auth, err := ProviderAuth(platform, user)
+	if err != nil {
+		t.Fatalf("new auth deps: %v", err)
+	}
+	httpDeps, err := ProviderHTTP(platform, system, auth, user)
+	if err != nil {
+		t.Fatalf("provide http deps: %v", err)
+	}
+
+	assertErrorCodeWithBodyAndContentType(
+		t,
+		httpDeps.Router,
+		http.MethodPost,
+		"/api/v1/system/echo",
+		`{"message":"hello eventhub"}`,
+		"text/plain",
+		http.StatusBadRequest,
+		"COMMON-400",
+	)
+}
+
+func TestProviderHTTPSkipsOpenAPIContractWhenRequestValidationDisabled(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := config.Config{
+		AppName: "eventhub-backend",
+		Env:     config.EnvTest,
+		Port:    8080,
+		Version: "test",
+		Log:     config.LogConfig{Level: slog.LevelError},
+		OpenAPI: config.OpenAPIConfig{
+			RequestValidationEnabled: false,
+			SpecPath:                 filepath.Join(t.TempDir(), "missing-eventhub.yaml"),
+		},
+	}
+	clk := clock.RealClock{}
+	platform := PlatformDeps{Config: cfg, Logger: logger, Clock: clk}
+	system := ProviderSystem(cfg, clk)
+	user := ProviderUser(nil)
+	auth, err := ProviderAuth(platform, user)
+	if err != nil {
+		t.Fatalf("new auth deps: %v", err)
+	}
+	httpDeps, err := ProviderHTTP(platform, system, auth, user)
+	if err != nil {
+		t.Fatalf("provide http deps: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/system/echo", strings.NewReader(`{"message":"hello eventhub"}`))
+	request.Header.Set("Content-Type", "text/plain")
+	httpDeps.Router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected current strict-server behavior without contract gate, got status %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func assertStatus(t *testing.T, handler http.Handler, method, path string, status int) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
@@ -309,9 +386,14 @@ func assertErrorCode(t *testing.T, handler http.Handler, method, path string, st
 
 func assertErrorCodeWithBody(t *testing.T, handler http.Handler, method, path string, requestBody string, status int, code string) {
 	t.Helper()
+	assertErrorCodeWithBodyAndContentType(t, handler, method, path, requestBody, "application/json", status, code)
+}
+
+func assertErrorCodeWithBodyAndContentType(t *testing.T, handler http.Handler, method, path string, requestBody string, contentType string, status int, code string) {
+	t.Helper()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, path, strings.NewReader(requestBody))
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", contentType)
 	handler.ServeHTTP(recorder, request)
 	assertErrorRecorder(t, method, path, recorder, status, code)
 }
@@ -379,4 +461,8 @@ func writeProviderContractSpec(t *testing.T, content string) string {
 	specPath := filepath.Join(t.TempDir(), "eventhub.yaml")
 	writeProviderTestFile(t, specPath, content)
 	return specPath
+}
+
+func repoProviderOpenAPISpecPath() string {
+	return filepath.Join("..", "..", "..", filepath.FromSlash(openapispec.DefaultSpecPath))
 }

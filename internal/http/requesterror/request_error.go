@@ -31,3 +31,15 @@ func InvalidParameters(fields FieldErrors) *apperror.AppError {
 		fields,
 	)
 }
+
+// UnsupportedContentType 构造请求体 Content-Type 不符合 OpenAPI 契约时的统一错误。
+func UnsupportedContentType(contentType string) *apperror.AppError {
+	if contentType == "" {
+		contentType = "缺少 Content-Type"
+	}
+	return apperror.WithDetails(
+		apperror.CommonValidation,
+		"请求内容类型不支持",
+		FieldErrors{"Content-Type": contentType},
+	)
+}

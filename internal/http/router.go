@@ -22,6 +22,8 @@ type RouterDependencies struct {
 	User         *userhandler.Handler
 	OpenAPI      *openapihandler.OpenAPIHandler
 	Authenticate func(http.Handler) http.Handler
+	// RequestContract 在 generated strict wrapper 之前执行 OpenAPI request contract gate。
+	RequestContract func(http.Handler) http.Handler
 }
 
 // NewRouter 组装应用的 HTTP 路由树，并返回可直接挂载到 http.Server 的 Handler。
