@@ -29,6 +29,7 @@ func TestOpenAPIPolicy(t *testing.T) {
 		t.Errorf("top-level security must stay empty; declare auth per operation so public endpoints remain explicit")
 	}
 
+	assertBearerAuthSecurityScheme(t, doc)
 	assertErrorResponseEnvelope(t, doc)
 
 	for _, item := range operations {
@@ -604,6 +605,32 @@ func assertAuthSecurityPolicy(t *testing.T, operations []operationItem) {
 		if gotBearerAuth != wantBearerAuth {
 			t.Errorf("%s expected BearerAuth=%v, got %v", item.label(), wantBearerAuth, gotBearerAuth)
 		}
+	}
+}
+
+// assertBearerAuthSecurityScheme 固化运行时 security bridge 依赖的认证方案。
+//
+// BearerAuth 不只是文档展示字段；contract gate 会根据 operation security 中的
+// BearerAuth 触发现有认证能力。因此 components.securitySchemes 中必须存在同名
+// http bearer scheme，避免 operation 级策略看似存在但运行时无法正确解释。
+func assertBearerAuthSecurityScheme(t *testing.T, doc *openapi3.T) {
+	t.Helper()
+
+	if doc == nil || doc.Components == nil || doc.Components.SecuritySchemes == nil {
+		t.Errorf("components.securitySchemes must declare BearerAuth")
+		return
+	}
+	schemeRef := doc.Components.SecuritySchemes["BearerAuth"]
+	if schemeRef == nil || schemeRef.Value == nil {
+		t.Errorf("components.securitySchemes.BearerAuth must exist")
+		return
+	}
+	scheme := schemeRef.Value
+	if scheme.Type != "http" {
+		t.Errorf("components.securitySchemes.BearerAuth type: got %q want http", scheme.Type)
+	}
+	if scheme.Scheme != "bearer" {
+		t.Errorf("components.securitySchemes.BearerAuth scheme: got %q want bearer", scheme.Scheme)
 	}
 }
 

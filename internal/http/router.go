@@ -17,11 +17,10 @@ import (
 
 // RouterDependencies 是 router 注册路由所需的显式依赖。
 type RouterDependencies struct {
-	System       *systemhandler.Handler
-	Auth         *authhandler.Handler
-	User         *userhandler.Handler
-	OpenAPI      *openapihandler.OpenAPIHandler
-	Authenticate func(http.Handler) http.Handler
+	System  *systemhandler.Handler
+	Auth    *authhandler.Handler
+	User    *userhandler.Handler
+	OpenAPI *openapihandler.OpenAPIHandler
 	// RequestContract 在 generated strict wrapper 之前执行 OpenAPI request contract gate。
 	RequestContract func(http.Handler) http.Handler
 }

@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,18 +15,54 @@ import (
 	"eventhub-go/internal/apperror"
 	"eventhub-go/internal/http/requesterror"
 	"eventhub-go/internal/http/response"
+	"eventhub-go/internal/security"
 )
 
 // RequestValidator 在 generated strict handler 前执行 OpenAPI request contract gate。
 type RequestValidator struct {
-	router  routers.Router
-	options openapi3filter.Options
+	router          routers.Router
+	options         openapi3filter.Options
+	validateRequest bool
+}
+
+type requestValidatorConfig struct {
+	authenticate    func(http.Handler) http.Handler
+	validateRequest bool
+}
+
+// RequestValidatorOption 调整 OpenAPI request contract gate 的运行时能力。
+type RequestValidatorOption func(*requestValidatorConfig)
+
+// WithAuthentication 注入现有 Bearer token 认证 middleware，供 OpenAPI security requirement 触发。
+func WithAuthentication(authenticate func(http.Handler) http.Handler) RequestValidatorOption {
+	return func(config *requestValidatorConfig) {
+		config.authenticate = authenticate
+	}
+}
+
+// WithRequestValidation 控制是否执行 path/query/body/content-type 等请求契约校验。
+//
+// 即使关闭请求校验，已注入的 authentication bridge 仍可基于 OpenAPI security requirement
+// 执行认证/授权，避免 runtime validation 开关影响受保护 API 的安全边界。
+func WithRequestValidation(enabled bool) RequestValidatorOption {
+	return func(config *requestValidatorConfig) {
+		config.validateRequest = enabled
+	}
 }
 
 // NewRequestValidator 根据启动期加载完成的 OpenAPI spec 创建 request validator。
-func NewRequestValidator(spec *Spec) (*RequestValidator, error) {
+func NewRequestValidator(spec *Spec, options ...RequestValidatorOption) (*RequestValidator, error) {
 	if spec == nil || spec.Document == nil {
 		return nil, errors.New("openapi request contract spec is nil")
+	}
+
+	config := requestValidatorConfig{
+		validateRequest: true,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(&config)
+		}
 	}
 
 	document := *spec.Document
@@ -37,11 +74,10 @@ func NewRequestValidator(spec *Spec) (*RequestValidator, error) {
 		return nil, fmt.Errorf("initialize openapi request contract router: %w", err)
 	}
 	return &RequestValidator{
-		router: router,
+		router:          router,
+		validateRequest: config.validateRequest,
 		options: openapi3filter.Options{
-			// 阶段三只校验 path/query/body/content-type；BearerAuth 与 x-required-roles
-			// 暂时继续留在现有 security middleware，阶段四再迁移到这里。
-			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
+			AuthenticationFunc: authenticationFunc(config.authenticate),
 		},
 	}, nil
 }
@@ -64,8 +100,15 @@ func (v *RequestValidator) Middleware(next http.Handler) http.Handler {
 			Route:      route,
 			Options:    &v.options,
 		}
-		if err := openapi3filter.ValidateRequest(r.Context(), input); err != nil {
-			response.WriteError(w, r, appErrorFromValidationError(err))
+
+		var validateErr error
+		if v.validateRequest {
+			validateErr = openapi3filter.ValidateRequest(r.Context(), input)
+		} else {
+			validateErr = validateSecurityRequirements(r.Context(), input)
+		}
+		if validateErr != nil {
+			response.WriteError(w, r, appErrorFromValidationError(validateErr))
 			return
 		}
 
@@ -74,6 +117,10 @@ func (v *RequestValidator) Middleware(next http.Handler) http.Handler {
 }
 
 func appErrorFromValidationError(err error) *apperror.AppError {
+	if appErr := appErrorFromSecurityError(err); appErr != nil {
+		return appErr
+	}
+
 	var requestErr *openapi3filter.RequestError
 	if !errors.As(err, &requestErr) {
 		return requesterror.InvalidParameters(requesterror.FieldErrors{
@@ -170,4 +217,207 @@ func bodyFieldErrors(requestErr *openapi3filter.RequestError) requesterror.Field
 	return requesterror.FieldErrors{
 		"body": "请求体不符合 OpenAPI schema",
 	}
+}
+
+func validateSecurityRequirements(ctx context.Context, input *openapi3filter.RequestValidationInput) error {
+	if input == nil || input.Route == nil || input.Route.Operation == nil {
+		return nil
+	}
+	securityRequirements := input.Route.Operation.Security
+	if securityRequirements == nil {
+		securityRequirements = &input.Route.Spec.Security
+	}
+	if securityRequirements == nil {
+		return nil
+	}
+	return openapi3filter.ValidateSecurityRequirements(ctx, input, *securityRequirements)
+}
+
+func authenticationFunc(authenticate func(http.Handler) http.Handler) openapi3filter.AuthenticationFunc {
+	if authenticate == nil {
+		return openapi3filter.NoopAuthenticationFunc
+	}
+	return func(_ context.Context, input *openapi3filter.AuthenticationInput) error {
+		if input == nil || input.RequestValidationInput == nil || input.RequestValidationInput.Request == nil {
+			return openAPIAuthenticationError(input, unauthorizedError())
+		}
+		if input.SecuritySchemeName != "BearerAuth" {
+			return openAPIAuthenticationError(input, unauthorizedError())
+		}
+
+		request := input.RequestValidationInput.Request
+		authenticatedRequest, appErr := authenticateRequest(authenticate, request)
+		if appErr != nil {
+			return openAPIAuthenticationError(input, appErr)
+		}
+		*request = *authenticatedRequest
+
+		if appErr := authorizeRequiredRoles(input); appErr != nil {
+			return openAPIAuthenticationError(input, appErr)
+		}
+		return nil
+	}
+}
+
+func authenticateRequest(authenticate func(http.Handler) http.Handler, request *http.Request) (*http.Request, *apperror.AppError) {
+	probe := newAuthenticationProbeResponseWriter()
+	var authenticatedRequest *http.Request
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		authenticatedRequest = r
+	})
+
+	authenticate(next).ServeHTTP(probe, request)
+	if authenticatedRequest == nil {
+		return nil, appErrorFromAuthenticationStatus(probe.status)
+	}
+	return authenticatedRequest, nil
+}
+
+type authenticationProbeResponseWriter struct {
+	header http.Header
+	status int
+}
+
+func newAuthenticationProbeResponseWriter() *authenticationProbeResponseWriter {
+	return &authenticationProbeResponseWriter{header: http.Header{}}
+}
+
+func (w *authenticationProbeResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *authenticationProbeResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return len(body), nil
+}
+
+func (w *authenticationProbeResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func authorizeRequiredRoles(input *openapi3filter.AuthenticationInput) *apperror.AppError {
+	roles, present, ok := requiredRoles(input.RequestValidationInput.Route.Operation)
+	if !present {
+		return nil
+	}
+	if !ok || len(roles) == 0 {
+		return forbiddenError()
+	}
+
+	principal, ok := security.PrincipalFromContext(input.RequestValidationInput.Request.Context())
+	if !ok {
+		return unauthorizedError()
+	}
+	for _, role := range roles {
+		if !principalHasRole(principal, role) {
+			return forbiddenError()
+		}
+	}
+	return nil
+}
+
+func requiredRoles(operation *openapi3.Operation) ([]string, bool, bool) {
+	if operation == nil || operation.Extensions == nil {
+		return nil, false, true
+	}
+	rawRoles, present := operation.Extensions["x-required-roles"]
+	if !present {
+		return nil, false, true
+	}
+
+	switch roles := rawRoles.(type) {
+	case []string:
+		return normalizeRoles(roles), true, true
+	case []any:
+		values := make([]string, 0, len(roles))
+		for _, role := range roles {
+			value, ok := role.(string)
+			if !ok {
+				return nil, true, false
+			}
+			values = append(values, value)
+		}
+		return normalizeRoles(values), true, true
+	default:
+		return nil, true, false
+	}
+}
+
+func normalizeRoles(roles []string) []string {
+	values := make([]string, 0, len(roles))
+	for _, role := range roles {
+		value := strings.ToUpper(strings.TrimSpace(role))
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func principalHasRole(principal security.Principal, role string) bool {
+	required := requiredAuthority(role)
+	for _, authority := range principal.Authorities {
+		if strings.ToUpper(strings.TrimSpace(authority)) == required {
+			return true
+		}
+	}
+	return false
+}
+
+func requiredAuthority(role string) string {
+	value := strings.ToUpper(strings.TrimSpace(role))
+	if strings.HasPrefix(value, "ROLE_") {
+		return value
+	}
+	return "ROLE_" + value
+}
+
+func openAPIAuthenticationError(input *openapi3filter.AuthenticationInput, appErr *apperror.AppError) error {
+	if input == nil {
+		return appErr
+	}
+	return input.NewError(appErr)
+}
+
+func appErrorFromAuthenticationStatus(status int) *apperror.AppError {
+	switch status {
+	case http.StatusForbidden:
+		return forbiddenError()
+	case http.StatusNotFound:
+		return apperror.New(apperror.CommonNotFound, "请求的资源不存在")
+	case http.StatusInternalServerError:
+		return apperror.New(apperror.CommonInternal, "")
+	default:
+		return unauthorizedError()
+	}
+}
+
+func appErrorFromSecurityError(err error) *apperror.AppError {
+	var appErr *apperror.AppError
+	if errors.As(err, &appErr) {
+		return appErr
+	}
+
+	var securityErr *openapi3filter.SecurityRequirementsError
+	if errors.As(err, &securityErr) {
+		for _, child := range securityErr.Errors {
+			if appErr := appErrorFromSecurityError(child); appErr != nil {
+				return appErr
+			}
+		}
+		return unauthorizedError()
+	}
+	return nil
+}
+
+func unauthorizedError() *apperror.AppError {
+	return apperror.New(apperror.AuthUnauthorized, "请先登录或重新登录")
+}
+
+func forbiddenError() *apperror.AppError {
+	return apperror.New(apperror.AuthForbidden, "权限不足")
 }

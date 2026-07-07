@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,8 +16,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	openapispec "eventhub-go/api/openapi"
 	"eventhub-go/internal/config"
 	apphttp "eventhub-go/internal/http"
+	"eventhub-go/internal/http/contract"
 	authhandler "eventhub-go/internal/http/handler/auth"
 	systemhandler "eventhub-go/internal/http/handler/system"
 	userhandler "eventhub-go/internal/http/handler/user"
@@ -392,6 +395,91 @@ func TestAdminUpdateUserStatusEndpointDisablesOldAccessToken(t *testing.T) {
 	assertHTTPError(t, me, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
 }
 
+func TestOpenAPIContractSecurityBridgeAllowsPublicOperation(t *testing.T) {
+	router, _ := testAuthRouterWithRequestContract(t, nil)
+
+	recorder := performRequest(router, http.MethodGet, "/api/v1/system/ping", nil, nil)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("public operation status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeAPIResponse(t, recorder)
+	if body["code"] != "COMMON-000" {
+		t.Fatalf("unexpected public operation body: %#v", body)
+	}
+}
+
+func TestOpenAPIContractSecurityBridgeRejectsMissingTokenBeforeBodyDecode(t *testing.T) {
+	router, _ := testAuthRouterWithRequestContract(t, nil)
+
+	recorder := performRequest(
+		router,
+		http.MethodPatch,
+		"/api/v1/admin/users/1/status",
+		[]byte(`{"status"`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
+}
+
+func TestOpenAPIContractSecurityBridgeRejectsInvalidToken(t *testing.T) {
+	router, _ := testAuthRouterWithRequestContract(t, nil)
+
+	recorder := performRequest(router, http.MethodGet, "/api/v1/me", nil, map[string]string{
+		"Authorization": "Bearer not-a-valid-token",
+	})
+
+	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
+}
+
+func TestOpenAPIContractSecurityBridgeRejectsUserRoleForAdminOperation(t *testing.T) {
+	router, _ := testAuthRouterWithRequestContract(t, nil)
+	registerViaHTTP(t, router, "alice", "alice@example.com")
+	token := loginAndReturnAccessToken(t, router, "alice", "Password123")
+
+	recorder := performRequest(router, http.MethodGet, "/api/v1/admin/users", nil, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+
+	assertHTTPError(t, recorder, http.StatusForbidden, "AUTH-403", "权限不足")
+}
+
+func TestOpenAPIContractSecurityBridgeAllowsAdminOperation(t *testing.T) {
+	router, _ := testAuthRouterWithRequestContract(t, nil)
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+
+	recorder := performRequest(router, http.MethodGet, "/api/v1/admin/users", nil, map[string]string{
+		"Authorization": "Bearer " + adminToken,
+	})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("admin operation status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeAPIResponse(t, recorder)
+	if body["code"] != "COMMON-000" {
+		t.Fatalf("unexpected admin operation body: %#v", body)
+	}
+}
+
+func TestOpenAPIContractSecurityBridgeUsesOperationRolesNotPathPrefix(t *testing.T) {
+	router, _ := testAuthRouterWithRequestContract(t, func(spec *contract.Spec) {
+		operation := spec.Document.Paths.Find("/api/v1/me").Get
+		if operation.Extensions == nil {
+			operation.Extensions = map[string]any{}
+		}
+		operation.Extensions["x-required-roles"] = []any{"ADMIN"}
+	})
+	registerViaHTTP(t, router, "alice", "alice@example.com")
+	token := loginAndReturnAccessToken(t, router, "alice", "Password123")
+
+	recorder := performRequest(router, http.MethodGet, "/api/v1/me", nil, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+
+	assertHTTPError(t, recorder, http.StatusForbidden, "AUTH-403", "权限不足")
+}
+
 func TestAuthParitySmokeFlow(t *testing.T) {
 	router, _ := testAuthRouter(t)
 	userID := registerViaHTTPAndReturnUserID(t, router, "smokeuser", "smokeuser@example.com")
@@ -479,6 +567,11 @@ func TestAuthParitySmokeFlow(t *testing.T) {
 
 func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 	t.Helper()
+	return testAuthRouterWithRequestContract(t, nil)
+}
+
+func testAuthRouterWithRequestContract(t *testing.T, mutateSpec func(*contract.Spec)) (http.Handler, *testHTTPAuthStore) {
+	t.Helper()
 	codec, err := jwt.NewCodec(
 		"eventhub-backend",
 		"eventhub-test-access-token-secret-for-auth-tests",
@@ -509,11 +602,23 @@ func testAuthRouter(t *testing.T) (http.Handler, *testHTTPAuthStore) {
 		t.Fatalf("new auth service: %v", err)
 	}
 	systemService := systemsvc.NewService(config.Config{AppName: "eventhub-backend", Env: config.EnvTest, Version: "test"}, clock.RealClock{})
+	spec, err := contract.LoadSpec(filepath.Join("..", "..", filepath.FromSlash(openapispec.DefaultSpecPath)))
+	if err != nil {
+		t.Fatalf("load request contract spec: %v", err)
+	}
+	if mutateSpec != nil {
+		mutateSpec(spec)
+	}
+	authenticate := middleware.Authenticate(codec, userService)
+	validator, err := contract.NewRequestValidator(spec, contract.WithAuthentication(authenticate))
+	if err != nil {
+		t.Fatalf("new request validator: %v", err)
+	}
 	router := apphttp.NewRouter(testLogger(), apphttp.RouterDependencies{
-		System:       systemhandler.NewHandler(systemService),
-		Auth:         authhandler.NewHandler(authService),
-		User:         userhandler.NewHandler(userService),
-		Authenticate: middleware.Authenticate(codec, userService),
+		System:          systemhandler.NewHandler(systemService),
+		Auth:            authhandler.NewHandler(authService),
+		User:            userhandler.NewHandler(userService),
+		RequestContract: validator.Middleware,
 	})
 	return router, store
 }

@@ -28,13 +28,19 @@ func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user 
 	}
 	var requestContract *contract.Spec
 	var requestContractMiddleware func(http.Handler) http.Handler
-	if platform.Config.OpenAPI.RequestValidationEnabled {
+	if platform.Config.OpenAPI.RequestValidationEnabled || auth.Authenticate != nil {
 		var err error
 		requestContract, err = contract.LoadSpec(platform.Config.OpenAPI.SpecPath)
 		if err != nil {
 			return HTTPDeps{}, fmt.Errorf("initialize openapi request contract: %w", err)
 		}
-		requestValidator, err := contract.NewRequestValidator(requestContract)
+		options := []contract.RequestValidatorOption{
+			contract.WithRequestValidation(platform.Config.OpenAPI.RequestValidationEnabled),
+		}
+		if auth.Authenticate != nil {
+			options = append(options, contract.WithAuthentication(auth.Authenticate))
+		}
+		requestValidator, err := contract.NewRequestValidator(requestContract, options...)
 		if err != nil {
 			return HTTPDeps{}, fmt.Errorf("initialize openapi request validator: %w", err)
 		}
@@ -45,7 +51,6 @@ func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user 
 		Auth:            auth.Handler,
 		User:            user.Handler,
 		OpenAPI:         openAPI,
-		Authenticate:    auth.Authenticate,
 		RequestContract: requestContractMiddleware,
 	}
 	router := apphttp.NewRouter(platform.Logger, routerDeps)
