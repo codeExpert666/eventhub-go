@@ -195,6 +195,81 @@ func TestProviderHTTPSkipsOpenAPIAssetValidationWhenDisabled(t *testing.T) {
 	assertErrorCode(t, httpDeps.Router, http.MethodGet, "/openapi.yaml", http.StatusNotFound, "COMMON-404")
 }
 
+func TestProviderHTTPLoadsOpenAPIContractWhenRequestValidationEnabled(t *testing.T) {
+	t.Parallel()
+
+	specPath := writeProviderContractSpec(t, providerTestValidContractYAML)
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := config.Config{
+		AppName: "eventhub-backend",
+		Env:     config.EnvTest,
+		Port:    8080,
+		Version: "test",
+		Log:     config.LogConfig{Level: slog.LevelError},
+		OpenAPI: config.OpenAPIConfig{
+			RequestValidationEnabled: true,
+			SpecPath:                 specPath,
+		},
+	}
+	clk := clock.RealClock{}
+	platform := PlatformDeps{Config: cfg, Logger: logger, Clock: clk}
+	system := ProviderSystem(cfg, clk)
+	user := ProviderUser(nil)
+	auth, err := ProviderAuth(platform, user)
+	if err != nil {
+		t.Fatalf("new auth deps: %v", err)
+	}
+
+	httpDeps, err := ProviderHTTP(platform, system, auth, user)
+	if err != nil {
+		t.Fatalf("provide http deps: %v", err)
+	}
+	if httpDeps.RequestContract == nil {
+		t.Fatal("expected request contract spec to be loaded")
+	}
+	if httpDeps.RequestContract.Path != specPath {
+		t.Fatalf("request contract path: got %q want %q", httpDeps.RequestContract.Path, specPath)
+	}
+}
+
+func TestProviderHTTPRejectsMissingOpenAPIContractWhenRequestValidationEnabled(t *testing.T) {
+	t.Parallel()
+
+	missingPath := filepath.Join(t.TempDir(), "missing-eventhub.yaml")
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := config.Config{
+		AppName: "eventhub-backend",
+		Env:     config.EnvTest,
+		Port:    8080,
+		Version: "test",
+		Log:     config.LogConfig{Level: slog.LevelError},
+		OpenAPI: config.OpenAPIConfig{
+			RequestValidationEnabled: true,
+			SpecPath:                 missingPath,
+		},
+	}
+	clk := clock.RealClock{}
+	platform := PlatformDeps{Config: cfg, Logger: logger, Clock: clk}
+	system := ProviderSystem(cfg, clk)
+	user := ProviderUser(nil)
+	auth, err := ProviderAuth(platform, user)
+	if err != nil {
+		t.Fatalf("new auth deps: %v", err)
+	}
+
+	httpDeps, err := ProviderHTTP(platform, system, auth, user)
+	if err == nil {
+		t.Fatal("expected provider error for missing OpenAPI contract")
+	}
+	if httpDeps.Router != nil || httpDeps.Server != nil || httpDeps.RequestContract != nil {
+		t.Fatalf("expected empty http deps on error, got %#v", httpDeps)
+	}
+	if !strings.Contains(err.Error(), "initialize openapi request contract") ||
+		!strings.Contains(err.Error(), missingPath) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func assertStatus(t *testing.T, handler http.Handler, method, path string, status int) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
@@ -258,10 +333,22 @@ func assertErrorRecorder(t *testing.T, method, path string, recorder *httptest.R
 }
 
 const (
-	providerTestOpenAPIYAML = "openapi: 3.0.3\ninfo:\n  title: Provider Test API\n  version: test\n"
-	providerTestSwaggerHTML = "<!doctype html><title>Provider Test Swagger UI</title><div id=\"swagger-ui\"></div>\n"
-	providerTestSwaggerCSS  = ".provider-swagger-ui { color: #222; }\n"
-	providerTestSwaggerJS   = "window.SwaggerUIBundle = function () {};\n"
+	providerTestOpenAPIYAML       = "openapi: 3.0.3\ninfo:\n  title: Provider Test API\n  version: test\n"
+	providerTestSwaggerHTML       = "<!doctype html><title>Provider Test Swagger UI</title><div id=\"swagger-ui\"></div>\n"
+	providerTestSwaggerCSS        = ".provider-swagger-ui { color: #222; }\n"
+	providerTestSwaggerJS         = "window.SwaggerUIBundle = function () {};\n"
+	providerTestValidContractYAML = `openapi: 3.0.3
+info:
+  title: Provider Contract Test API
+  version: test
+paths:
+  /ping:
+    get:
+      operationId: ping
+      responses:
+        "200":
+          description: pong
+`
 )
 
 func writeProviderOpenAPITestAssets(t *testing.T) string {
@@ -284,4 +371,12 @@ func writeProviderTestFile(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func writeProviderContractSpec(t *testing.T, content string) string {
+	t.Helper()
+
+	specPath := filepath.Join(t.TempDir(), "eventhub.yaml")
+	writeProviderTestFile(t, specPath, content)
+	return specPath
 }

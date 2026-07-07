@@ -109,12 +109,16 @@ type AuthTokenConfig struct {
 	RefreshTokenTTL time.Duration
 }
 
-// OpenAPIConfig 保存 OpenAPI 文档入口配置。
+// OpenAPIConfig 保存 OpenAPI 文档入口与运行时请求契约校验配置。
 type OpenAPIConfig struct {
 	// Enabled 控制是否注册 /openapi.yaml 和 /swagger/* 文档入口。
 	Enabled bool
 	// AssetRoot 指向 OpenAPI YAML 与 Swagger UI 静态资源所在的本地目录；相对路径按进程当前工作目录解析。
 	AssetRoot string
+	// RequestValidationEnabled 控制是否在启动期装配 OpenAPI request contract gate。
+	RequestValidationEnabled bool
+	// SpecPath 指向 runtime request contract gate 读取的 OpenAPI YAML 文件；相对路径按进程当前工作目录解析。
+	SpecPath string
 }
 
 // Load 从环境变量加载配置，并对外部输入做标准化和兜底处理。
@@ -162,8 +166,10 @@ func Load() Config {
 			RefreshTokenTTL:          getEnvDuration("EVENTHUB_REFRESH_TOKEN_TTL", defaultRefreshTokenTTL),
 		},
 		OpenAPI: OpenAPIConfig{
-			Enabled:   getEnvBool("OPENAPI_ENABLED", defaultOpenAPIEnabled(env)),
-			AssetRoot: getEnv("OPENAPI_ASSET_ROOT", openapispec.AssetRoot),
+			Enabled:                  getEnvBool("OPENAPI_ENABLED", defaultOpenAPIEnabled(env)),
+			AssetRoot:                getEnv("OPENAPI_ASSET_ROOT", openapispec.AssetRoot),
+			RequestValidationEnabled: getEnvBool("OPENAPI_REQUEST_VALIDATION_ENABLED", defaultOpenAPIRequestValidationEnabled(env)),
+			SpecPath:                 getEnv("OPENAPI_SPEC_PATH", openapispec.DefaultSpecPath),
 		},
 	}
 

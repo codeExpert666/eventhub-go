@@ -31,7 +31,9 @@ COPY --from=build /workspace/api/openapi/swagger /app/api/openapi/swagger
 ENV EVENTHUB_ENV=prod \
 	EVENTHUB_HTTP_PORT=8080 \
 	OPENAPI_ENABLED=false \
-	OPENAPI_ASSET_ROOT=/app/api/openapi
+	OPENAPI_ASSET_ROOT=/app/api/openapi \
+	OPENAPI_REQUEST_VALIDATION_ENABLED=false \
+	OPENAPI_SPEC_PATH=/app/api/openapi/eventhub.yaml
 
 EXPOSE 8080
 

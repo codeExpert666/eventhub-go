@@ -8,28 +8,37 @@ import (
 
 func TestLoadOpenAPIDefaultsByEnv(t *testing.T) {
 	tests := []struct {
-		name    string
-		env     string
-		enabled bool
+		name                     string
+		env                      string
+		enabled                  bool
+		requestValidationEnabled bool
 	}{
-		{name: "dev defaults enabled", env: EnvDev, enabled: true},
-		{name: "test defaults enabled", env: EnvTest, enabled: true},
-		{name: "prod defaults disabled", env: EnvProd, enabled: false},
-		{name: "unknown env falls back to dev enabled", env: "local", enabled: true},
+		{name: "dev defaults enabled", env: EnvDev, enabled: true, requestValidationEnabled: true},
+		{name: "test defaults enabled", env: EnvTest, enabled: true, requestValidationEnabled: true},
+		{name: "prod defaults disabled", env: EnvProd, enabled: false, requestValidationEnabled: false},
+		{name: "unknown env falls back to dev enabled", env: "local", enabled: true, requestValidationEnabled: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("EVENTHUB_ENV", tt.env)
 			t.Setenv("OPENAPI_ENABLED", "")
+			t.Setenv("OPENAPI_REQUEST_VALIDATION_ENABLED", "")
+			t.Setenv("OPENAPI_SPEC_PATH", "")
 
 			cfg := Load()
 
 			if cfg.OpenAPI.Enabled != tt.enabled {
 				t.Fatalf("OpenAPI enabled: got %t want %t", cfg.OpenAPI.Enabled, tt.enabled)
 			}
+			if cfg.OpenAPI.RequestValidationEnabled != tt.requestValidationEnabled {
+				t.Fatalf("OpenAPI request validation enabled: got %t want %t", cfg.OpenAPI.RequestValidationEnabled, tt.requestValidationEnabled)
+			}
 			if cfg.OpenAPI.AssetRoot != openapispec.AssetRoot {
 				t.Fatalf("OpenAPI asset root: got %q want %q", cfg.OpenAPI.AssetRoot, openapispec.AssetRoot)
+			}
+			if cfg.OpenAPI.SpecPath != openapispec.DefaultSpecPath {
+				t.Fatalf("OpenAPI spec path: got %q want %q", cfg.OpenAPI.SpecPath, openapispec.DefaultSpecPath)
 			}
 		})
 	}
@@ -79,6 +88,55 @@ func TestLoadOpenAPIAssetRootCanBeOverridden(t *testing.T) {
 
 			if cfg.OpenAPI.AssetRoot != tt.want {
 				t.Fatalf("OpenAPI asset root: got %q want %q", cfg.OpenAPI.AssetRoot, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadOpenAPIRequestValidationEnabledCanBeOverridden(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		value   string
+		enabled bool
+	}{
+		{name: "prod can be explicitly enabled", env: EnvProd, value: "true", enabled: true},
+		{name: "dev can be explicitly disabled", env: EnvDev, value: "false", enabled: false},
+		{name: "invalid value falls back to env default", env: EnvProd, value: "maybe", enabled: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("EVENTHUB_ENV", tt.env)
+			t.Setenv("OPENAPI_REQUEST_VALIDATION_ENABLED", tt.value)
+
+			cfg := Load()
+
+			if cfg.OpenAPI.RequestValidationEnabled != tt.enabled {
+				t.Fatalf("OpenAPI request validation enabled: got %t want %t", cfg.OpenAPI.RequestValidationEnabled, tt.enabled)
+			}
+		})
+	}
+}
+
+func TestLoadOpenAPISpecPathCanBeOverridden(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "custom absolute path", env: "/app/api/openapi/eventhub.yaml", want: "/app/api/openapi/eventhub.yaml"},
+		{name: "blank value falls back to default", env: "   ", want: openapispec.DefaultSpecPath},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENAPI_SPEC_PATH", tt.env)
+
+			cfg := Load()
+
+			if cfg.OpenAPI.SpecPath != tt.want {
+				t.Fatalf("OpenAPI spec path: got %q want %q", cfg.OpenAPI.SpecPath, tt.want)
 			}
 		})
 	}

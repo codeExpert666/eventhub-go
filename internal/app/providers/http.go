@@ -5,13 +5,15 @@ import (
 	"net/http"
 
 	apphttp "eventhub-go/internal/http"
+	"eventhub-go/internal/http/contract"
 	openapihandler "eventhub-go/internal/http/handler/openapi"
 )
 
 // HTTPDeps 聚合 HTTP router 和 server 装配结果。
 type HTTPDeps struct {
-	Router http.Handler
-	Server *apphttp.Server
+	Router          http.Handler
+	Server          *apphttp.Server
+	RequestContract *contract.Spec
 }
 
 // ProviderHTTP 创建应用 router 和 HTTP server。
@@ -24,6 +26,14 @@ func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user 
 			return HTTPDeps{}, fmt.Errorf("initialize openapi handler: %w", err)
 		}
 	}
+	var requestContract *contract.Spec
+	if platform.Config.OpenAPI.RequestValidationEnabled {
+		var err error
+		requestContract, err = contract.LoadSpec(platform.Config.OpenAPI.SpecPath)
+		if err != nil {
+			return HTTPDeps{}, fmt.Errorf("initialize openapi request contract: %w", err)
+		}
+	}
 	routerDeps := apphttp.RouterDependencies{
 		System:       system.Handler,
 		Auth:         auth.Handler,
@@ -33,7 +43,8 @@ func ProviderHTTP(platform PlatformDeps, system SystemDeps, auth AuthDeps, user 
 	}
 	router := apphttp.NewRouter(platform.Logger, routerDeps)
 	return HTTPDeps{
-		Router: router,
-		Server: apphttp.NewServer(platform.Config, platform.Logger, router),
+		Router:          router,
+		Server:          apphttp.NewServer(platform.Config, platform.Logger, router),
+		RequestContract: requestContract,
 	}, nil
 }

@@ -6,6 +6,8 @@ const (
 	AssetRoot = "api/openapi"
 	// SpecPath 是相对于资源根目录的 OpenAPI YAML 契约路径。
 	SpecPath = "eventhub.yaml"
+	// DefaultSpecPath 是 runtime request contract gate 默认读取的 OpenAPI YAML 文件路径。
+	DefaultSpecPath = AssetRoot + "/" + SpecPath
 	// SwaggerDirPath 是相对于资源根目录的 Swagger UI 静态资源目录。
 	SwaggerDirPath = "swagger"
 	// SwaggerIndexPath 是相对于资源根目录的 Swagger UI HTML 入口路径。

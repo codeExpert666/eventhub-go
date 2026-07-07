@@ -28,6 +28,7 @@ func TestBootstrapWrapsOpenAPIAssetProviderErrors(t *testing.T) {
 	t.Setenv("EVENTHUB_REDIS_ADDR", "")
 	t.Setenv("OPENAPI_ENABLED", "true")
 	t.Setenv("OPENAPI_ASSET_ROOT", filepath.Join(t.TempDir(), "missing-openapi-assets"))
+	t.Setenv("OPENAPI_REQUEST_VALIDATION_ENABLED", "false")
 
 	application, err := Bootstrap(context.Background())
 	if err == nil {

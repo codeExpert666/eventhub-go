@@ -179,7 +179,9 @@ OpenAPI 相关门禁分工：
 - `EVENTHUB_ENV=prod` 时，`OPENAPI_ENABLED` 默认关闭。
 - `OPENAPI_ASSET_ROOT` 指向 OpenAPI YAML 与 Swagger UI 本地静态资源根目录；本地默认填相对路径 `api/openapi`，这适用于从仓库根目录启动（相对路径按进程当前工作目录解析），容器默认填绝对路径 `/app/api/openapi`。
 - `OPENAPI_ENABLED=true` 时会在启动期校验 `OPENAPI_ASSET_ROOT` 下的 `eventhub.yaml` 和 Swagger UI HTML/CSS/JS 是否存在；资源缺失会启动失败，禁用时不校验也不注册文档路由。
-- Dockerfile runtime 默认 `EVENTHUB_ENV=prod`、`OPENAPI_ENABLED=false` 且 `OPENAPI_ASSET_ROOT=/app/api/openapi`。
+- `OPENAPI_REQUEST_VALIDATION_ENABLED` 独立控制 runtime request contract gate；dev/test 默认开启，prod 默认关闭，不受 `OPENAPI_ENABLED` 影响。
+- `OPENAPI_SPEC_PATH` 指向 runtime request contract gate 读取的 OpenAPI YAML 文件；本地默认 `api/openapi/eventhub.yaml`，容器 / prod-like 环境建议使用 `/app/api/openapi/eventhub.yaml`。
+- Dockerfile runtime 默认 `EVENTHUB_ENV=prod`、`OPENAPI_ENABLED=false`、`OPENAPI_ASSET_ROOT=/app/api/openapi`、`OPENAPI_REQUEST_VALIDATION_ENABLED=false` 且 `OPENAPI_SPEC_PATH=/app/api/openapi/eventhub.yaml`。
 - 生产环境必须显式注入 `EVENTHUB_ACCESS_TOKEN_SIGNING_SECRET` 和真实数据库/Redis 凭据。
 
 ## 目录结构
