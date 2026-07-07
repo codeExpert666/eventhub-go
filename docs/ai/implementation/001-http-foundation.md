@@ -35,7 +35,7 @@ Go 仓库现在已经具备最小可运行后端：统一响应、错误码与 `
   - recover middleware 增加响应提交状态追踪，避免已提交响应后再写 `COMMON-500`。
 - 新增了统一响应、validation、错误码和分页模型：
   - `internal/http/response/response.go`
-  - `internal/http/validation/json.go`
+  - `internal/http/requesterror/json.go`
   - `internal/apperror/error.go`
   - `internal/page/page.go`
 - 新增了系统基础 handler：

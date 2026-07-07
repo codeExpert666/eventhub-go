@@ -61,7 +61,7 @@
   - `internal/http/handler/auth`
   - `internal/http/handler/user`
   - `internal/http/response`
-  - `internal/http/validation`
+  - `internal/http/requesterror`
   - `internal/apperror`
   - 删除旧 direct `net/http` handler 文件：
     - `internal/http/handler/auth/{register,login,refresh,logout,mapping}.go`

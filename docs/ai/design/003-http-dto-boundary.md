@@ -62,7 +62,7 @@
   - `internal/platform`
   - `internal/http/router`
   - `internal/http/middleware`
-  - `internal/http/validation`
+  - `internal/http/requesterror`
   - `internal/apperror`
   - `internal/page`
   - `api/openapi`

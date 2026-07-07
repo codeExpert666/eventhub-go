@@ -56,8 +56,8 @@
 - 接口列表与请求/响应结构不变。
 - 错误码 / 异常场景不变：
   - malformed body 继续返回现有 body 解析错误。
-  - body 字段校验继续使用 `validation.BodyValidationError`。
-  - path/query 参数错误继续使用 `validation.ParameterValidationError`。
+  - body 字段校验继续使用 `requesterror.InvalidBody`。
+  - path/query 参数错误继续使用 `requesterror.InvalidParameters`。
 - 字段处理规则：
   - register username/email：trim 后进入 command；email 小写化仍由 service 层负责。
   - register password：原样进入 command。
@@ -84,8 +84,8 @@
   4. strict 方法调用对应 service。
   5. strict 方法通过局部 data mapping helper 构造 generated response data，再填充 generated response envelope。
 - 异常流程：
-  - body 缺失由 strict 方法或 parser 返回 `validation.MalformedBodyError`。
-  - 字段校验失败由 parser 返回 `validation.BodyValidationError` 或 `ParameterValidationError`。
+  - body 缺失由 strict 方法或 parser 返回 `requesterror.MalformedBody`。
+  - 字段校验失败由 parser 返回 `requesterror.InvalidBody` 或 `InvalidParameters`。
 - 分层分工：
   - handler 负责 HTTP 入参校验、必要 normalize、service command 构造和响应映射。
   - service 继续负责业务规则、事务边界、凭证处理和最终 normalize。

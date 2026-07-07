@@ -73,7 +73,7 @@
   - `internal/http/handler`
   - `internal/http/dto`
   - `internal/http/response`
-  - `internal/http/validation`
+  - `internal/http/requesterror`
   - `internal/page`
   - `internal/service`
   - `internal/domain`

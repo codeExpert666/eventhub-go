@@ -43,11 +43,11 @@
   - `internal/http/response/{meta.go,error.go,writer.go}`
     - 删除 success/status/generic JSON writer 对外 API，并将 response 包文件收敛为单个 `response.go`。
     - `WriteError` 通过 generated `ErrorResponse` 写出统一错误 envelope，错误 body 构造不再作为外部 API 暴露。
-  - `internal/http/validation/request_error.go`
-    - 将 malformed body 构造函数导出为 `MalformedBodyError`，供 strict request error handler 复用。
+  - `internal/http/requesterror/request_error.go`
+    - 将 malformed body 构造函数导出为请求体格式错误构造器；035 阶段后当前函数名为 `MalformedBody`，030 阶段前名称为 `MalformedBodyError`。
     - 删除旧 `DecodeJSONBody`，因为生产 body decode 已由 generated strict handler 负责。
     - `FieldErrors` 改为 `apperror.Details` 的别名，统一错误详情结构。
-    - 2026-07-05 后续错误边界整理将原 `json.go` 重命名为 `request_error.go`，并新增 `ParameterValidationError` 统一 query/path 参数校验错误。
+    - 2026-07-05 后续错误边界整理将原 `json.go` 重命名为 `request_error.go`，并新增 query/path 参数校验错误构造器；035 阶段后当前函数名为 `InvalidParameters`。
   - `internal/apperror/mapper.go`
     - 2026-07-05 后续错误边界整理新增 `FromErrorOrInternal`，接管原 `validation.AppErrorFromError` 的普通错误兜底收敛职责。
   - `internal/http/router_test.go`
@@ -139,7 +139,7 @@
   - 2026-07-05 response 包公共面收敛前新增架构测试后运行 `go test ./internal/http/response -count=1`：
     - 失败：`TestPublicSurfaceStaysFocused` 发现导出函数仍包含 `ErrorBody` 和 `ErrorMeta`，而目标公共函数只有 `SuccessMeta` 和 `WriteError`。
   - 2026-07-05 response 包公共面收敛后运行 `gofmt -w internal/http/response/response.go internal/http/response/response_test.go && go test ./internal/http/response -count=1`：通过。
-  - 2026-07-05 response/AppError/DTO 收敛后运行 `go test ./internal/apperror ./internal/http/response ./internal/http/validation -count=1`：通过。
+  - 2026-07-05 response/AppError/DTO 收敛后运行 `go test ./internal/apperror ./internal/http/response ./internal/http/requesterror -count=1`：通过。
   - 2026-07-05 response/AppError/DTO 收敛后运行 `go test ./internal/http/handler/... ./internal/http -count=1`：通过。
   - 2026-07-05 response/AppError/DTO 收敛后运行 `go test ./...`：通过。
   - 2026-07-05 response 包公共面最终收敛后再次运行 `go test ./...`：通过。
@@ -177,7 +177,7 @@
   - 检查 `internal/http/handler/{auth,system,user}`，确认旧 direct `net/http` 方法已删除，strict handler 仍复用必要的校验和 principal/path/query helper。
   - 检查 `internal/http/handler/{auth,system,user}`，确认 strict handler 已直接使用 generated request/response model，不再依赖 `internal/http/dto`。
   - 检查 `internal/http/response`，确认对外成功 writer、项目自有 `APIResponse`、`ErrorMeta` 和 `ErrorBody` 已删除，公共 API 只保留 `Meta`、`SuccessMeta`、`WriteError`，错误写出使用 generated `ErrorResponse`。
-  - 检查 `internal/apperror` 与 `internal/http/validation`，确认结构化错误详情统一为 `Details`。
+  - 检查 `internal/apperror` 与 `internal/http/requesterror`，确认结构化错误详情统一为 `Details`。
   - 检查没有新增 `api/openapi/genstrict`。
   - 检查 `internal/http/router_contract_test.go` 和 `internal/http/openapi_contract_test.go` 已删除。
   - 检查 OpenAPI docs/static assets routes 仍受 `deps.OpenAPI` 控制。

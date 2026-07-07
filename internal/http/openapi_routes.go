@@ -11,8 +11,8 @@ import (
 	openapigen "eventhub-go/api/openapi/gen"
 	"eventhub-go/internal/apperror"
 	"eventhub-go/internal/http/middleware"
+	"eventhub-go/internal/http/requesterror"
 	"eventhub-go/internal/http/response"
-	"eventhub-go/internal/http/validation"
 )
 
 // registerOpenAPIRoutes 将 eventhub.yaml 生成的 strict server routes 接入主 chi router。
@@ -90,7 +90,7 @@ func requiresOpenAPIAdminRole(r *http.Request) bool {
 
 // writeOpenAPIRequestBodyError 将 strict handler 的 JSON body 解码错误映射为统一请求体格式错误。
 func writeOpenAPIRequestBodyError(w http.ResponseWriter, r *http.Request, _ error) {
-	response.WriteError(w, r, validation.MalformedBodyError())
+	response.WriteError(w, r, requesterror.MalformedBody())
 }
 
 // writeOpenAPIResponseError 将 strict handler 传出的业务错误、响应类型错误或写出错误写成统一错误响应。
@@ -123,5 +123,5 @@ func parameterValidationError(err error) *apperror.AppError {
 	case "userId":
 		message = "userId 必须是正整数"
 	}
-	return validation.ParameterValidationError(validation.FieldErrors{field: message})
+	return requesterror.InvalidParameters(requesterror.FieldErrors{field: message})
 }

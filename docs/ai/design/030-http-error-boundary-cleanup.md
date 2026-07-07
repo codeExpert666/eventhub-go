@@ -1,5 +1,7 @@
 # HTTP Error Boundary Cleanup
 
+> 2026-07-07 状态说明：本设计的 030 阶段先收敛 `apperror` 与 HTTP request 错误构造边界；design/implementation 035 阶段一已继续将原 `internal/http/validation` 重命名为 `internal/http/requesterror`，并把公共函数名收敛为 `MalformedBody`、`InvalidBody`、`InvalidParameters`。本文件中保留的 `validation` 命名用于描述 030 阶段当时的设计背景。
+
 ## 1. 背景
 - 当前 `internal/http/validation` 同时承载两类职责：
   - HTTP 请求体、字段、参数校验错误构造，例如 `BodyValidationError`、`MalformedBodyError` 和 `FieldErrors`。

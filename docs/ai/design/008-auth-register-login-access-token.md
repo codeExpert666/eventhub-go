@@ -56,7 +56,7 @@
   - `internal/http/handler/user`
   - `internal/http/dto/auth`
   - `internal/http/dto/user`
-  - `internal/http/validation`
+  - `internal/http/requesterror`
   - `internal/apperror`
   - `internal/service/auth`
   - `internal/service/user`

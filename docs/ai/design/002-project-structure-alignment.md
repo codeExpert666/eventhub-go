@@ -49,7 +49,7 @@
   - `migrations`
   - `docs/ai`
 - 本次明确不触及的运行时代码目录：
-  - `internal/http/validation`：继续保留现有 JSON decode 和字段错误映射。
+  - `internal/http/requesterror`：继续保留现有 JSON decode 和字段错误映射。
   - `internal/domain`：当前没有真实领域模型，不创建空 package。
   - `internal/repository`、`internal/repository/mysql`、`internal/repository/mysql/queries`、`internal/repository/mysql/sqlc`：当前没有数据库访问，不创建空 package。
   - `internal/security`：当前没有认证、安全上下文、JWT 或 refresh token，不创建空 package。

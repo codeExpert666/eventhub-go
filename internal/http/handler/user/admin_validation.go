@@ -6,7 +6,7 @@ import (
 
 	openapigen "eventhub-go/api/openapi/gen"
 	"eventhub-go/internal/apperror"
-	"eventhub-go/internal/http/validation"
+	"eventhub-go/internal/http/requesterror"
 	"eventhub-go/internal/page"
 	usersvc "eventhub-go/internal/service/user"
 )
@@ -14,7 +14,7 @@ import (
 const localDateTimeLayout = "2006-01-02T15:04:05"
 
 func parseAdminUserListQuery(params openapigen.ListAdminUsersParams) (usersvc.AdminUserListQuery, *apperror.AppError) {
-	fields := validation.FieldErrors{}
+	fields := requesterror.FieldErrors{}
 	query := usersvc.AdminUserListQuery{
 		Page: page.DefaultPage,
 		Size: page.DefaultSize,
@@ -65,22 +65,22 @@ func parseAdminUserListQuery(params openapigen.ListAdminUsersParams) (usersvc.Ad
 	}
 
 	if len(fields) > 0 {
-		return usersvc.AdminUserListQuery{}, validation.ParameterValidationError(fields)
+		return usersvc.AdminUserListQuery{}, requesterror.InvalidParameters(fields)
 	}
 	return query, nil
 }
 
 func parseUpdateUserStatusCommand(userID int64, request *openapigen.UpdateUserStatusRequest) (usersvc.UpdateUserStatusCommand, *apperror.AppError) {
 	if userID <= 0 {
-		return usersvc.UpdateUserStatusCommand{}, validation.ParameterValidationError(validation.FieldErrors{
+		return usersvc.UpdateUserStatusCommand{}, requesterror.InvalidParameters(requesterror.FieldErrors{
 			"userId": "userId 必须是正整数",
 		})
 	}
 	if request == nil {
-		return usersvc.UpdateUserStatusCommand{}, validation.MalformedBodyError()
+		return usersvc.UpdateUserStatusCommand{}, requesterror.MalformedBody()
 	}
 
-	fields := validation.FieldErrors{}
+	fields := requesterror.FieldErrors{}
 	switch request.Status {
 	case "":
 		fields["status"] = "status 不能为空"
@@ -89,7 +89,7 @@ func parseUpdateUserStatusCommand(userID int64, request *openapigen.UpdateUserSt
 		fields["status"] = "用户状态只能是 ENABLED 或 DISABLED"
 	}
 	if len(fields) > 0 {
-		return usersvc.UpdateUserStatusCommand{}, validation.BodyValidationError(fields)
+		return usersvc.UpdateUserStatusCommand{}, requesterror.InvalidBody(fields)
 	}
 	return usersvc.UpdateUserStatusCommand{
 		UserID: userID,
@@ -97,7 +97,7 @@ func parseUpdateUserStatusCommand(userID int64, request *openapigen.UpdateUserSt
 	}, nil
 }
 
-func parseTimeParam(rawValue *string, name string, fields validation.FieldErrors) *time.Time {
+func parseTimeParam(rawValue *string, name string, fields requesterror.FieldErrors) *time.Time {
 	if rawValue == nil {
 		return nil
 	}

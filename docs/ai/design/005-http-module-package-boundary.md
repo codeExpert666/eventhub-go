@@ -53,7 +53,7 @@
   - `internal/platform`
   - `internal/http/middleware`
   - `internal/http/response`
-  - `internal/http/validation`
+  - `internal/http/requesterror`
   - `internal/apperror`
   - `internal/page`
   - `internal/domain`

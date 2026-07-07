@@ -34,7 +34,7 @@
 | admin status 请求/响应字段 | P0 | `UpdateUserStatusRequest.java` | `internal/http/dto/user/request.go` | 已对齐 | `status` 必填，只允许 `ENABLED` / `DISABLED`，响应返回更新后的 `UserInfo`。 |
 | ApiResponse envelope | P0 | `ApiResponse.java`、`SecurityErrorResponseWriter.java` | `internal/http/response` | 已对齐 | 统一包含 `code/message/data/requestId/timestamp`，成功码 `COMMON-000`。 |
 | 错误码集合 | P0 | `ErrorCode.java`、`AuthException.java` | `internal/apperror/code.go`、`internal/service/auth/errors.go` | 已对齐 | `COMMON-000/400/401/404/500`、`AUTH-401/403/409` 均已覆盖。 |
-| validation 错误语义 | P0 | `GlobalExceptionHandler.java`、DTO validation | `internal/http/validation`、handler validation | 已对齐 | 请求体格式、字段校验、查询参数校验均映射 `COMMON-400`。 |
+| request error 错误语义 | P0 | `GlobalExceptionHandler.java`、DTO validation | `internal/http/requesterror`、handler validation | 已对齐 | 请求体格式、字段校验、查询参数校验均映射 `COMMON-400`；`requesterror` 只构造 HTTP request 相关 `AppError`，不执行 OpenAPI contract 校验。 |
 | users schema | P0 | `V2__stage_1_auth_jwt_rbac.sql` | `migrations/000002_auth_schema.up.sql` | 已对齐 | 字段、唯一约束和 `ENABLED/DISABLED` 状态值一致。 |
 | roles schema / seed | P0 | `V2__stage_1_auth_jwt_rbac.sql` | `migrations/000002_auth_schema.up.sql` | 已对齐 | `USER` / `ADMIN` seed、`uk_roles_code` 一致。 |
 | user_roles schema | P0 | `V2__stage_1_auth_jwt_rbac.sql` | `migrations/000002_auth_schema.up.sql` | 已对齐 | 唯一约束、外键和角色反查索引一致。 |

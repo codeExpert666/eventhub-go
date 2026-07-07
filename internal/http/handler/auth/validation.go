@@ -7,7 +7,7 @@ import (
 
 	openapigen "eventhub-go/api/openapi/gen"
 	"eventhub-go/internal/apperror"
-	"eventhub-go/internal/http/validation"
+	"eventhub-go/internal/http/requesterror"
 	authsvc "eventhub-go/internal/service/auth"
 )
 
@@ -15,10 +15,10 @@ var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 func parseRegisterCommand(request *openapigen.RegisterRequest) (authsvc.RegisterCommand, *apperror.AppError) {
 	if request == nil {
-		return authsvc.RegisterCommand{}, validation.MalformedBodyError()
+		return authsvc.RegisterCommand{}, requesterror.MalformedBody()
 	}
 
-	fields := validation.FieldErrors{}
+	fields := requesterror.FieldErrors{}
 	command := authsvc.RegisterCommand{
 		Username: strings.TrimSpace(request.Username),
 		Email:    strings.TrimSpace(string(request.Email)),
@@ -50,17 +50,17 @@ func parseRegisterCommand(request *openapigen.RegisterRequest) (authsvc.Register
 	}
 
 	if len(fields) > 0 {
-		return authsvc.RegisterCommand{}, validation.BodyValidationError(fields)
+		return authsvc.RegisterCommand{}, requesterror.InvalidBody(fields)
 	}
 	return command, nil
 }
 
 func parseLoginCommand(request *openapigen.LoginRequest) (authsvc.LoginCommand, *apperror.AppError) {
 	if request == nil {
-		return authsvc.LoginCommand{}, validation.MalformedBodyError()
+		return authsvc.LoginCommand{}, requesterror.MalformedBody()
 	}
 
-	fields := validation.FieldErrors{}
+	fields := requesterror.FieldErrors{}
 	command := authsvc.LoginCommand{
 		UsernameOrEmail: strings.TrimSpace(request.UsernameOrEmail),
 		Password:        request.Password,
@@ -79,17 +79,17 @@ func parseLoginCommand(request *openapigen.LoginRequest) (authsvc.LoginCommand, 
 	}
 
 	if len(fields) > 0 {
-		return authsvc.LoginCommand{}, validation.BodyValidationError(fields)
+		return authsvc.LoginCommand{}, requesterror.InvalidBody(fields)
 	}
 	return command, nil
 }
 
 func parseRefreshCommand(request *openapigen.RefreshTokenRequest) (authsvc.RefreshCommand, *apperror.AppError) {
 	if request == nil {
-		return authsvc.RefreshCommand{}, validation.MalformedBodyError()
+		return authsvc.RefreshCommand{}, requesterror.MalformedBody()
 	}
 
-	fields := validation.FieldErrors{}
+	fields := requesterror.FieldErrors{}
 
 	if strings.TrimSpace(request.RefreshToken) == "" {
 		fields["refreshToken"] = "refreshToken 不能为空"
@@ -98,7 +98,7 @@ func parseRefreshCommand(request *openapigen.RefreshTokenRequest) (authsvc.Refre
 	}
 
 	if len(fields) > 0 {
-		return authsvc.RefreshCommand{}, validation.BodyValidationError(fields)
+		return authsvc.RefreshCommand{}, requesterror.InvalidBody(fields)
 	}
 	return authsvc.RefreshCommand{RefreshToken: request.RefreshToken}, nil
 }

@@ -36,7 +36,7 @@
   - `internal/config` 增加 MySQL 和 auth token 配置。
   - `internal/app` 在配置 MySQL DSN 时装配真实 auth repository/service/middleware。
   - `internal/http/router.go` 和 `internal/http/server.go` 支持通过 `RouterOption` 注入 auth 路由依赖。
-  - `internal/http/validation/error.go` 增加 error 到 `AppError` 的统一转换辅助。
+  - 当时的 `internal/http/validation/error.go` 增加 error 到 `AppError` 的统一转换辅助；030 阶段后该普通错误兜底职责已迁入 `internal/apperror.FromErrorOrInternal`，035 阶段后 HTTP request 错误构造包已重命名为 `internal/http/requesterror`。
   - `configs/*.env.example` 增加 MySQL、access token 和 refresh token 配置示例。
   - `go.mod` 将本次直接使用的 `github.com/google/uuid` 和 `golang.org/x/crypto` 标记为直接依赖。
 - 删除了什么

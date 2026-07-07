@@ -46,7 +46,7 @@
   - `createdAtFrom` / `createdAtTo` / `updatedAtFrom` / `updatedAtTo`：可选，本地时间格式 `2006-01-02T15:04:05`。
 - 响应结构不变，仍返回 generated `ApiResponseAdminUserPage`。
 - 错误码 / 异常场景不变：
-  - query/path 参数错误继续使用 `COMMON-400` 和 `validation.ParameterValidationError`。
+  - query/path 参数错误继续使用 `COMMON-400` 和 `requesterror.InvalidParameters`。
   - 字段错误消息保持现有中文文案。
 - 与 Java 版 OpenAPI / controller 契约差异：无新的对外契约差异。
 
@@ -64,7 +64,7 @@
   5. 时间范围校验在 query 组装完成后执行。
   6. handler 将规范化后的 `usersvc.AdminUserListQuery` 交给 service。
 - 异常流程：
-  - 任意字段校验失败时收集 `validation.FieldErrors` 并返回 `ParameterValidationError`。
+  - 任意字段校验失败时收集 `requesterror.FieldErrors` 并返回 `InvalidParameters`。
   - 非法时间格式保留字段级错误，不进入 service。
 - 分层分工：
   - handler 负责 HTTP 参数解析、校验和 generated model 到 service query 的映射。

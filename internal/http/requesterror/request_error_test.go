@@ -1,28 +1,28 @@
-package validation_test
+package requesterror_test
 
 import (
 	"testing"
 
 	"eventhub-go/internal/apperror"
-	"eventhub-go/internal/http/validation"
+	"eventhub-go/internal/http/requesterror"
 )
 
-func TestBodyValidationError(t *testing.T) {
-	err := validation.BodyValidationError(validation.FieldErrors{
+func TestInvalidBody(t *testing.T) {
+	err := requesterror.InvalidBody(requesterror.FieldErrors{
 		"username": "username 不能为空",
 	})
 
 	assertValidationError(t, err, "请求体参数校验失败", "username", "username 不能为空")
 }
 
-func TestMalformedBodyError(t *testing.T) {
-	err := validation.MalformedBodyError()
+func TestMalformedBody(t *testing.T) {
+	err := requesterror.MalformedBody()
 
 	assertValidationError(t, err, "请求体格式不合法", "body", "请求体缺失或 JSON 格式错误")
 }
 
-func TestParameterValidationError(t *testing.T) {
-	err := validation.ParameterValidationError(validation.FieldErrors{
+func TestInvalidParameters(t *testing.T) {
+	err := requesterror.InvalidParameters(requesterror.FieldErrors{
 		"page": "page 必须是整数",
 	})
 

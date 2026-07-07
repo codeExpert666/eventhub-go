@@ -63,7 +63,7 @@
   - `internal/http/middleware/request_id.go`
   - `internal/http/middleware/recover.go`
   - `internal/http/response`
-  - `internal/http/validation`
+  - `internal/http/requesterror`
   - `internal/http/handler/system_handler.go`
 - 新增错误与分页基础包：
   - `internal/apperror`
