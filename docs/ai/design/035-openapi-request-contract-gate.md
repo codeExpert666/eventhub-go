@@ -93,7 +93,7 @@
 - 请求参数：
   - path/query/header/cookie 均以 OpenAPI parameters 为运行时 contract 来源。
   - 业务 header/cookie 必须进入 OpenAPI spec；`Authorization` 不作为普通 header parameter 重复声明，而由 security scheme 表达。
-  - 未声明 query/header/cookie 是否拒绝，由 `internal/http/contract` 的 policy 选项控制；默认建议先对 query 采取与 OpenAPI 一致的已声明字段校验，未知字段策略可作为后续收紧项。
+  - 阶段五策略：只严格校验 OpenAPI 已声明的 query/header/cookie parameter；未知 query/header/cookie 暂不拒绝，以兼容客户端追踪字段、灰度字段、浏览器/代理注入 header 或历史调用方透传 cookie。后续如改为拒绝未知字段，必须补 router/contract 测试证明不影响既有客户端契约。
 - request body：
   - `requestBody.required`、media type、schema、required fields、enum、min/max、pattern、format、`additionalProperties` 由 contract gate 执行。
   - contract gate 读取 body 后必须重置 `r.Body`，避免破坏 generated strict decoder。
@@ -127,7 +127,9 @@
 - 错误码 / 异常场景：
   - malformed body：`COMMON-400`，`message=请求体格式不合法`。
   - body schema violation：`COMMON-400`，`message=请求体参数校验失败`。
-  - path/query/header/cookie violation：`COMMON-400`，`message=请求参数校验失败` 或更具体的 header/cookie 消息。
+  - path/query violation：`COMMON-400`，`message=请求参数校验失败`。
+  - header violation：`COMMON-400`，`message=请求头参数校验失败`。
+  - cookie violation：`COMMON-400`，`message=Cookie 参数校验失败`。
   - unsupported content-type：`COMMON-400`，`message=请求内容类型不支持`。
   - missing/invalid token：`AUTH-401`。
   - missing required role：`AUTH-403`。
@@ -176,6 +178,9 @@
   3. 阶段三：新增 `internal/http/contract` middleware，覆盖 path/query/body/content-type，接入 router。
   4. 阶段四：将 BearerAuth 与 `x-required-roles` 从现有 `openAPISecurityMiddleware` 迁入 contract gate。
   5. 阶段五：补齐 header/cookie policy、未知参数策略和 handler 重复校验收敛。
+     - header/cookie 已声明参数的 violation 由 `internal/http/contract` 映射为更具体的请求头 / Cookie 参数错误。
+     - 未知 query/header/cookie 当前允许通过；本阶段仅固化该兼容策略，不提前收紧。
+     - handler 中仅删除 OpenAPI schema 完整覆盖且已有 router contract 测试证明的 transport 校验，业务组合规则和 service 兜底校验继续保留。
 
 ## 9. 并发 / 幂等 / 缓存
 - 是否有超卖风险：无。
@@ -213,6 +218,9 @@
     - spec loader 从文件系统加载，路径缺失或 spec 非法时失败。
     - body replay 后 strict decoder 仍可读取。
     - path/query/header/cookie/body/content-type violation 映射稳定 `AppError`。
+    - header parameter violation 映射 `请求头参数校验失败`。
+    - cookie parameter violation 映射 `Cookie 参数校验失败`。
+    - 未知 query/header/cookie 在当前阶段允许通过。
     - security requirement bridge 区分 public、authenticated、admin。
 - service / repository 测试：
   - 不涉及。
@@ -229,6 +237,7 @@
     - invalid token。
     - non-admin token 访问 admin operation。
     - valid request 仍进入 strict handler。
+    - schema 已接管的 handler 重复校验，例如 echo message/tag 长度、管理员用户 status enum、更新用户状态 body enum。
 - OpenAPI validate：
   - `make openapi-check`。
   - `make openapi-lint`。
@@ -269,6 +278,6 @@
   - 不选方案 E：会把 transport contract 逻辑分散到模块 handler，破坏 spec-first 的集中治理价值。
 - 后续可演进点：
   - 引入更细的 violation localization 和中英文错误消息映射。
-  - 对未知 query/header/cookie 增加分级策略：warn -> reject。
+  - 对未知 query/header/cookie 增加分级策略：allow -> warn -> reject；进入 reject 前必须补兼容性测试。
   - 增加 request validation 指标，例如 reject count、operationId、violation location。
   - 随 event/order/payment API 增长，逐步把更多 transport 约束迁入 OpenAPI schema。

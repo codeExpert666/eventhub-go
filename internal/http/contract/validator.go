@@ -133,9 +133,15 @@ func appErrorFromValidationError(err error) *apperror.AppError {
 		if name == "" {
 			name = "parameter"
 		}
-		return requesterror.InvalidParameters(requesterror.FieldErrors{
-			name: parameterErrorMessage(parameter, requestErr),
-		})
+		fields := requesterror.FieldErrors{name: parameterErrorMessage(parameter, requestErr)}
+		switch parameter.In {
+		case openapi3.ParameterInHeader:
+			return requesterror.InvalidHeaders(fields)
+		case openapi3.ParameterInCookie:
+			return requesterror.InvalidCookies(fields)
+		default:
+			return requesterror.InvalidParameters(fields)
+		}
 	}
 
 	if requestErr.RequestBody != nil {

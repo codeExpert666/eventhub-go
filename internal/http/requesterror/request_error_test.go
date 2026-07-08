@@ -29,6 +29,22 @@ func TestInvalidParameters(t *testing.T) {
 	assertValidationError(t, err, "请求参数校验失败", "page", "page 必须是整数")
 }
 
+func TestInvalidHeaders(t *testing.T) {
+	err := requesterror.InvalidHeaders(requesterror.FieldErrors{
+		"X-Tenant-Id": "X-Tenant-Id 不符合请求头契约",
+	})
+
+	assertValidationError(t, err, "请求头参数校验失败", "X-Tenant-Id", "X-Tenant-Id 不符合请求头契约")
+}
+
+func TestInvalidCookies(t *testing.T) {
+	err := requesterror.InvalidCookies(requesterror.FieldErrors{
+		"session": "session 不符合 Cookie 契约",
+	})
+
+	assertValidationError(t, err, "Cookie 参数校验失败", "session", "session 不符合 Cookie 契约")
+}
+
 func assertValidationError(t *testing.T, err *apperror.AppError, message, field, fieldMessage string) {
 	t.Helper()
 	if err.Code() != apperror.CommonValidation {

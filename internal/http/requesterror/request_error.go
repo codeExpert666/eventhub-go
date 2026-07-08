@@ -32,6 +32,24 @@ func InvalidParameters(fields FieldErrors) *apperror.AppError {
 	)
 }
 
+// InvalidHeaders 根据字段校验结果构造统一的请求头参数校验错误。
+func InvalidHeaders(fields FieldErrors) *apperror.AppError {
+	return apperror.WithDetails(
+		apperror.CommonValidation,
+		"请求头参数校验失败",
+		fields,
+	)
+}
+
+// InvalidCookies 根据字段校验结果构造统一的 Cookie 参数校验错误。
+func InvalidCookies(fields FieldErrors) *apperror.AppError {
+	return apperror.WithDetails(
+		apperror.CommonValidation,
+		"Cookie 参数校验失败",
+		fields,
+	)
+}
+
 // UnsupportedContentType 构造请求体 Content-Type 不符合 OpenAPI 契约时的统一错误。
 func UnsupportedContentType(contentType string) *apperror.AppError {
 	if contentType == "" {

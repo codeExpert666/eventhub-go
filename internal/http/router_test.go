@@ -400,6 +400,70 @@ func TestOpenAPIRequestContractGateRejectsBodySchemaViolation(t *testing.T) {
 	assertValidationError(t, recorder, "请求体参数校验失败")
 }
 
+func TestOpenAPIRequestContractGateRejectsEchoSchemaLengthViolation(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{"message":"`+strings.Repeat("a", 65)+`","tag":"ok"}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertValidationError(t, recorder, "请求体参数校验失败")
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if _, ok := data["message"]; !ok {
+		t.Fatalf("expected message field error, got %#v", data)
+	}
+}
+
+func TestOpenAPIRequestContractGateRejectsEchoTagSchemaLengthViolation(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{"message":"hello eventhub","tag":"`+strings.Repeat("t", 33)+`"}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertValidationError(t, recorder, "请求体参数校验失败")
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if _, ok := data["tag"]; !ok {
+		t.Fatalf("expected tag field error, got %#v", data)
+	}
+}
+
+func TestOpenAPIRequestContractGateRejectsInvalidStatusQueryBeforeHandler(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodGet,
+		"/api/v1/admin/users?status=DELETED",
+		nil,
+		nil,
+	)
+
+	assertValidationError(t, recorder, "请求参数校验失败")
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if _, ok := data["status"]; !ok {
+		t.Fatalf("expected status field error, got %#v", data)
+	}
+}
+
+func TestOpenAPIRequestContractGateRejectsInvalidUpdateStatusBodyBeforeHandler(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPatch,
+		"/api/v1/admin/users/1/status",
+		[]byte(`{"status":"DELETED"}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertValidationError(t, recorder, "请求体参数校验失败")
+	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
+	if _, ok := data["status"]; !ok {
+		t.Fatalf("expected status field error, got %#v", data)
+	}
+}
+
 func TestOpenAPIRequestContractGateReplaysBodyForStrictHandler(t *testing.T) {
 	recorder := performRequest(
 		testRouterWithRequestContract(t),

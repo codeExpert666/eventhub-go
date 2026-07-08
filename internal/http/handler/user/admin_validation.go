@@ -40,22 +40,11 @@ func parseAdminUserListQuery(params openapigen.ListAdminUsersParams) (usersvc.Ad
 	query.UpdatedAtFrom = parseTimeParam(params.UpdatedAtFrom, "updatedAtFrom", fields)
 	query.UpdatedAtTo = parseTimeParam(params.UpdatedAtTo, "updatedAtTo", fields)
 
-	if query.Page < 1 {
-		fields["page"] = "页码不能小于 1"
-	}
-	if query.Size < 1 {
-		fields["size"] = "每页条数不能小于 1"
-	} else if query.Size > page.MaxSize {
-		fields["size"] = "每页条数不能超过 100"
-	}
 	if len(query.Username) > 32 {
 		fields["username"] = "用户名筛选长度不能超过 32"
 	}
 	if len(query.Email) > 128 {
 		fields["email"] = "邮箱筛选长度不能超过 128"
-	}
-	if query.Status != "" && query.Status != string(openapigen.ENABLED) && query.Status != string(openapigen.DISABLED) {
-		fields["status"] = "用户状态只能是 ENABLED 或 DISABLED"
 	}
 	if query.CreatedAtFrom != nil && query.CreatedAtTo != nil && query.CreatedAtFrom.After(*query.CreatedAtTo) {
 		fields["createdAtFrom"] = "createdAtFrom 不能晚于 createdAtTo"
@@ -80,17 +69,6 @@ func parseUpdateUserStatusCommand(userID int64, request *openapigen.UpdateUserSt
 		return usersvc.UpdateUserStatusCommand{}, requesterror.MalformedBody()
 	}
 
-	fields := requesterror.FieldErrors{}
-	switch request.Status {
-	case "":
-		fields["status"] = "status 不能为空"
-	case openapigen.ENABLED, openapigen.DISABLED:
-	default:
-		fields["status"] = "用户状态只能是 ENABLED 或 DISABLED"
-	}
-	if len(fields) > 0 {
-		return usersvc.UpdateUserStatusCommand{}, requesterror.InvalidBody(fields)
-	}
 	return usersvc.UpdateUserStatusCommand{
 		UserID: userID,
 		Status: string(request.Status),
