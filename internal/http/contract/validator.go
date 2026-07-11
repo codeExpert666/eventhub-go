@@ -55,6 +55,7 @@ func NewRequestValidator(spec *Spec, options ...RequestValidatorOption) (*Reques
 	if spec == nil || spec.Document == nil {
 		return nil, errors.New("openapi request contract spec is nil")
 	}
+	registerNativeFormats()
 
 	config := requestValidatorConfig{
 		validateRequest: true,

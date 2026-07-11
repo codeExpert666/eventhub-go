@@ -58,9 +58,8 @@ func TestOpenAPIPolicy(t *testing.T) {
 
 // TestOpenAPIValidationPolicy 固化 x-validation 的声明格式。
 //
-// 本阶段只把字段规则和消息写入 OpenAPI，不改变 contract gate 的运行时行为。
-// policy 仅扫描 operation request body 的顶层字段和 query 参数，避免把响应模型上的
-// schema 约束误当成请求校验契约。
+// policy 扫描 operation request body 的顶层字段和 query 参数，固定 native/custom rule
+// 的声明与消息形态，避免把响应模型上的 schema 约束误当成请求校验契约。
 func TestOpenAPIValidationPolicy(t *testing.T) {
 	doc := loadOpenAPIDocument(t)
 	operations := collectOperations(doc)
@@ -103,7 +102,7 @@ func TestOpenAPIValidationPolicy(t *testing.T) {
 // TestOpenAPIJavaParityValidationMessagesAreStable 固化当前 Java DTO 的字段消息。
 //
 // 仅检查“存在 message”不足以防止文案漂移；这里对当前已迁移请求字段逐条断言准确中文消息，
-// 并覆盖 Go OpenAPI 已声明的时间格式和枚举规则。运行时 custom rule engine 留待后续阶段实现。
+// 并覆盖 Go OpenAPI 已声明的时间格式、custom rule 和枚举规则。
 func TestOpenAPIJavaParityValidationMessagesAreStable(t *testing.T) {
 	doc := loadOpenAPIDocument(t)
 	operations := collectOperations(doc)
@@ -597,7 +596,7 @@ func fieldValidationPolicyViolations(field validationField) []string {
 				if !messageOK {
 					violations = append(violations, fmt.Sprintf("%s x-validation.rules[%d].message must be a non-empty string", field.label, index))
 				}
-				if nameOK && name != "containsLetterAndDigit" {
+				if nameOK && name != "containsLetterAndDigit" && name != "localDateTime" {
 					violations = append(violations, fmt.Sprintf("%s x-validation.rules[%d] uses unsupported custom rule %q", field.label, index, name))
 				}
 			}
@@ -726,7 +725,7 @@ func nonEmptyString(raw any) (string, bool) {
 }
 
 // javaParityValidationMessages 返回当前 Java DTO 与既有 Go schema 的稳定消息基线。
-// 时间字段没有 Java Bean Validation message，因此沿用当前 Go handler 的字段级格式提示；
+// 时间字段没有 Java Bean Validation message，因此沿用 Go OpenAPI contract 的字段级格式提示；
 // UpdateUserStatus.status 的 enum 消息复用 Java 管理员查询状态的允许值提示。
 func javaParityValidationMessages() map[string]map[string]string {
 	return map[string]map[string]string{
@@ -834,6 +833,36 @@ func assertJavaParityCustomRules(t *testing.T, fieldsByLabel map[string]validati
 	got := strings.TrimSpace(rules["containsLetterAndDigit"])
 	if got != want {
 		t.Errorf("%s custom rule containsLetterAndDigit: got %q want %q", label, got, want)
+	}
+
+	localDateTimeMessages := map[string]string{
+		"GET /api/v1/admin/users query.createdAtFrom": "createdAtFrom 格式不合法",
+		"GET /api/v1/admin/users query.createdAtTo":   "createdAtTo 格式不合法",
+		"GET /api/v1/admin/users query.updatedAtFrom": "updatedAtFrom 格式不合法",
+		"GET /api/v1/admin/users query.updatedAtTo":   "updatedAtTo 格式不合法",
+	}
+	for fieldLabel, wantMessage := range localDateTimeMessages {
+		field, ok := fieldsByLabel[fieldLabel]
+		if !ok {
+			t.Errorf("Java parity validation field %s must exist", fieldLabel)
+			continue
+		}
+		validation, ok := validationExtension(field.schemaRef)
+		if !ok {
+			t.Errorf("%s must declare x-validation", fieldLabel)
+			continue
+		}
+		rules, ok := customRuleMessages(validation["rules"])
+		if !ok {
+			t.Errorf("%s x-validation.rules must contain named rules with messages", fieldLabel)
+			continue
+		}
+		if len(rules) != 1 {
+			t.Errorf("%s x-validation.rules: got %d rules want 1", fieldLabel, len(rules))
+		}
+		if gotMessage := strings.TrimSpace(rules["localDateTime"]); gotMessage != wantMessage {
+			t.Errorf("%s custom rule localDateTime: got %q want %q", fieldLabel, gotMessage, wantMessage)
+		}
 	}
 }
 

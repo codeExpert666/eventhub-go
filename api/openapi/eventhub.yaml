@@ -227,6 +227,9 @@ paths:
             x-validation:
               messages:
                 pattern: createdAtFrom 格式不合法
+              rules:
+                - name: localDateTime
+                  message: createdAtFrom 格式不合法
         - name: createdAtTo
           in: query
           description: 创建时间终点，格式示例 2026-05-18T23:59:59。
@@ -237,6 +240,9 @@ paths:
             x-validation:
               messages:
                 pattern: createdAtTo 格式不合法
+              rules:
+                - name: localDateTime
+                  message: createdAtTo 格式不合法
         - name: updatedAtFrom
           in: query
           description: 更新时间起点，格式示例 2026-05-01T00:00:00。
@@ -247,6 +253,9 @@ paths:
             x-validation:
               messages:
                 pattern: updatedAtFrom 格式不合法
+              rules:
+                - name: localDateTime
+                  message: updatedAtFrom 格式不合法
         - name: updatedAtTo
           in: query
           description: 更新时间终点，格式示例 2026-05-18T23:59:59。
@@ -257,6 +266,9 @@ paths:
             x-validation:
               messages:
                 pattern: updatedAtTo 格式不合法
+              rules:
+                - name: localDateTime
+                  message: updatedAtTo 格式不合法
       responses:
         '200':
           description: 用户摘要分页结果。
@@ -292,6 +304,11 @@ paths:
             type: integer
             format: int64
             minimum: 1
+            x-validation:
+              messages:
+                required: userId 不能为空
+                format: userId 必须是有效的 64 位整数
+                minimum: userId 必须是正整数
       requestBody:
         required: true
         content:

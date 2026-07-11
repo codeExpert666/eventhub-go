@@ -122,6 +122,47 @@ func TestRequestValidatorAllowsValidCustomRuleValues(t *testing.T) {
 	}
 }
 
+func TestRequestValidatorRejectsInvalidLocalDateTimeBeforeRangeEvaluation(t *testing.T) {
+	handler := testRequestContractHandler(t, validationCatalogRuntimeSpec)
+	tests := []struct {
+		name    string
+		target  string
+		field   string
+		message string
+	}{
+		{
+			name:    "invalid from calendar date without right boundary",
+			target:  "/profiles?createdAtFrom=2026-02-30T00:00:00",
+			field:   "createdAtFrom",
+			message: "createdAtFrom 格式不合法",
+		},
+		{
+			name:    "invalid to clock value",
+			target:  "/profiles?createdAtTo=2026-01-01T25:00:00",
+			field:   "createdAtTo",
+			message: "createdAtTo 格式不合法",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := customRuleTestRequest(http.MethodGet, tt.target, "")
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			body := assertContractError(t, recorder, http.StatusBadRequest, "请求参数校验失败")
+			assertSingleViolation(t, body, map[string]any{
+				"location": "query",
+				"field":    tt.field,
+				"path":     tt.field,
+				"rule":     "localDateTime",
+				"message":  tt.message,
+			})
+		})
+	}
+}
+
 func TestRequestValidatorRunsSchemaValidationBeforeCustomRules(t *testing.T) {
 	handler := testRequestContractHandler(t, validationCatalogRuntimeSpec)
 	request := customRuleTestRequest(http.MethodPost, "/profiles", `{"name":" "}`)
@@ -205,6 +246,8 @@ func TestFieldCustomRulePassesUsesWhitespaceAndASCIICompositionSemantics(t *test
 		{name: "composition rejects digits only", rule: customRuleContainsLetterAndDigit, value: "12345678", want: false},
 		{name: "composition accepts ASCII letter and digit", rule: customRuleContainsLetterAndDigit, value: "密码A1", want: true},
 		{name: "composition does not treat non ASCII classes as ASCII", rule: customRuleContainsLetterAndDigit, value: "密码１", want: false},
+		{name: "local date-time accepts valid seconds precision", rule: customRuleLocalDateTime, value: "2026-02-28T23:59:59", want: true},
+		{name: "local date-time rejects invalid calendar date", rule: customRuleLocalDateTime, value: "2026-02-30T00:00:00", want: false},
 	}
 
 	for _, tt := range tests {

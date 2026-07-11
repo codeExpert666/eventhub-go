@@ -69,9 +69,9 @@ func TestEchoReturnsWrappedSuccessResponse(t *testing.T) {
 }
 
 func TestEchoRejectsBlankMessage(t *testing.T) {
-	body := []byte(`{"message":"","tag":"bootstrap"}`)
+	body := []byte(`{"message":"   ","tag":"bootstrap"}`)
 	headers := map[string]string{"Content-Type": "application/json"}
-	recorder := performRequest(testRouter(), nethttp.MethodPost, "/api/v1/system/echo", body, headers)
+	recorder := performRequest(testRouterWithRequestContract(t), nethttp.MethodPost, "/api/v1/system/echo", body, headers)
 
 	if recorder.Code != nethttp.StatusBadRequest {
 		t.Fatalf("unexpected status: %d", recorder.Code)
@@ -370,6 +370,19 @@ func TestOpenAPIRequestContractGateRejectsInvalidPathBeforeSecurity(t *testing.T
 	assertSingleViolation(t, body, "path", "userId", "userId", "type", "userId 不符合路径参数契约")
 }
 
+func TestOpenAPIRequestContractGateRejectsPathMinimumBeforeHandler(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPatch,
+		"/api/v1/admin/users/0/status",
+		[]byte(`{"status":"ENABLED"}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	body := assertValidationError(t, recorder, "请求参数校验失败")
+	assertSingleViolation(t, body, "path", "userId", "userId", "minimum", "userId 必须是正整数")
+}
+
 func TestOpenAPIRequestContractGateRejectsUnsupportedContentType(t *testing.T) {
 	recorder := performRequest(
 		testRouterWithRequestContract(t),
@@ -535,6 +548,32 @@ func TestOpenAPIRequestContractGateRejectsBodySchemaViolation(t *testing.T) {
 
 	body := assertValidationError(t, recorder, "请求体参数校验失败")
 	assertSingleViolation(t, body, "body", "message", "message", "type", "")
+}
+
+func TestOpenAPIRequestContractGateRejectsEmailFormatBeforeHandler(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/auth/register",
+		[]byte(`{"username":"contractuser","email":"not-an-email","password":"Password123"}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	body := assertValidationError(t, recorder, "请求体参数校验失败")
+	assertSingleViolation(t, body, "body", "email", "email", "format", "email 格式不合法")
+}
+
+func TestOpenAPIRequestContractGateRejectsInvalidCalendarDateBeforeHandler(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodGet,
+		"/api/v1/admin/users?createdAtFrom=2026-02-30T00:00:00",
+		nil,
+		nil,
+	)
+
+	body := assertValidationError(t, recorder, "请求参数校验失败")
+	assertSingleViolation(t, body, "query", "createdAtFrom", "createdAtFrom", "localDateTime", "createdAtFrom 格式不合法")
 }
 
 func TestOpenAPIRequestContractGateRejectsEchoSchemaLengthViolation(t *testing.T) {

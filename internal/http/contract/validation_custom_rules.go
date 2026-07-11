@@ -231,6 +231,9 @@ func fieldCustomRulePasses(rule, value string) bool {
 		return strings.TrimSpace(value) != ""
 	case customRuleContainsLetterAndDigit:
 		return containsASCIILetterAndDigit(value)
+	case customRuleLocalDateTime:
+		_, err := time.Parse(validationLocalDateTimeLayout, value)
+		return err == nil
 	default:
 		return true
 	}

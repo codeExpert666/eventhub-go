@@ -24,7 +24,7 @@ func (h *Handler) PingStrict(ctx context.Context, _ openapigen.PingRequestObject
 	}), nil
 }
 
-// EchoStrict 校验 generated strict request body，并返回回显响应。
+// EchoStrict 将 generated strict request body 映射为 service command，并返回回显响应。
 func (h *Handler) EchoStrict(ctx context.Context, request openapigen.EchoRequestObject) (openapigen.EchoResponseObject, error) {
 	command, appErr := parseEchoCommand(request.Body)
 	if appErr != nil {

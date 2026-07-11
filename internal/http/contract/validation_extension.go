@@ -11,6 +11,7 @@ import (
 const (
 	customRuleNotBlank               = "notBlank"
 	customRuleContainsLetterAndDigit = "containsLetterAndDigit"
+	customRuleLocalDateTime          = "localDateTime"
 	crossFieldRuleNotAfter           = "notAfter"
 )
 
@@ -180,7 +181,7 @@ func parseNamedValidationRules(raw any, label string) ([]namedValidationRule, er
 		if err != nil {
 			return nil, err
 		}
-		if name != customRuleContainsLetterAndDigit {
+		if name != customRuleContainsLetterAndDigit && name != customRuleLocalDateTime {
 			return nil, fmt.Errorf("%s uses unsupported custom rule %q", itemLabel, name)
 		}
 		if _, duplicate := seen[name]; duplicate {

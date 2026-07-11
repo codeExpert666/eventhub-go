@@ -496,6 +496,9 @@ paths:
             x-validation:
               messages:
                 pattern: createdAtFrom 格式不合法
+              rules:
+                - name: localDateTime
+                  message: createdAtFrom 格式不合法
         - name: createdAtTo
           in: query
           schema:
@@ -504,6 +507,9 @@ paths:
             x-validation:
               messages:
                 pattern: createdAtTo 格式不合法
+              rules:
+                - name: localDateTime
+                  message: createdAtTo 格式不合法
       responses:
         "204":
           description: no content
