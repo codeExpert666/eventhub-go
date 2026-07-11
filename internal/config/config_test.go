@@ -13,10 +13,10 @@ func TestLoadOpenAPIDefaultsByEnv(t *testing.T) {
 		enabled                  bool
 		requestValidationEnabled bool
 	}{
-		{name: "dev defaults enabled", env: EnvDev, enabled: true, requestValidationEnabled: true},
-		{name: "test defaults enabled", env: EnvTest, enabled: true, requestValidationEnabled: true},
-		{name: "prod defaults disabled", env: EnvProd, enabled: false, requestValidationEnabled: false},
-		{name: "unknown env falls back to dev enabled", env: "local", enabled: true, requestValidationEnabled: true},
+		{name: "dev defaults docs and request validation enabled", env: EnvDev, enabled: true, requestValidationEnabled: true},
+		{name: "test defaults docs and request validation enabled", env: EnvTest, enabled: true, requestValidationEnabled: true},
+		{name: "prod defaults docs disabled and request validation enabled", env: EnvProd, enabled: false, requestValidationEnabled: true},
+		{name: "unknown env falls back to dev defaults", env: "local", enabled: true, requestValidationEnabled: true},
 	}
 
 	for _, tt := range tests {
@@ -100,9 +100,9 @@ func TestLoadOpenAPIRequestValidationEnabledCanBeOverridden(t *testing.T) {
 		value   string
 		enabled bool
 	}{
-		{name: "prod can be explicitly enabled", env: EnvProd, value: "true", enabled: true},
+		{name: "prod can be explicitly disabled as break glass", env: EnvProd, value: "false", enabled: false},
 		{name: "dev can be explicitly disabled", env: EnvDev, value: "false", enabled: false},
-		{name: "invalid value falls back to env default", env: EnvProd, value: "maybe", enabled: false},
+		{name: "invalid value falls back to enabled default", env: EnvProd, value: "maybe", enabled: true},
 	}
 
 	for _, tt := range tests {

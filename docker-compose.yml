@@ -93,7 +93,7 @@ services:
       EVENTHUB_LOG_LEVEL: INFO
       OPENAPI_ENABLED: "false"
       OPENAPI_ASSET_ROOT: /app/api/openapi
-      OPENAPI_REQUEST_VALIDATION_ENABLED: "false"
+      OPENAPI_REQUEST_VALIDATION_ENABLED: "true"
       OPENAPI_SPEC_PATH: /app/api/openapi/eventhub.yaml
       # MySQL 连接池配置；DSN 使用容器网络内的 mysql 主机名。
       EVENTHUB_MYSQL_DSN: eventhub:eventhub@tcp(mysql:3306)/eventhub?charset=utf8mb4&parseTime=true&loc=Local

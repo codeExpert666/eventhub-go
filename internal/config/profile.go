@@ -38,6 +38,6 @@ func defaultOpenAPIEnabled(env string) bool {
 	return env != EnvProd
 }
 
-func defaultOpenAPIRequestValidationEnabled(env string) bool {
-	return env != EnvProd
+func defaultOpenAPIRequestValidationEnabled() bool {
+	return true
 }

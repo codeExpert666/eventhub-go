@@ -10,6 +10,10 @@
 - 阶段 5 删除了 auth/user/system handler 中由 OpenAPI contract gate 接管的字段合法性校验；handler parser 现在只保留 nil body 防御、normalize、必要类型转换和 generated request 到 service Command/Query 的映射。
 - 阶段 5 同时闭环了删除 handler 校验前发现的两个 contract 缺口：注册请求的 `format: email` 现在由 contract runtime 执行；管理员时间字段在 spec 中显式声明 `x-validation.rules: localDateTime`，由 custom engine 在 `notAfter` 之前拒绝真实日历日期与时钟无效值。
 - 阶段 5 新增 AST 与行为测试，防止 auth/user/system handler 再次通过 `requesterror.InvalidBody`、`InvalidParameters` 或私有正则/mail parser 建立第二字段规则源。
+- 阶段 6 已将应用 profile 默认值、dev/test/prod 配置示例、Dockerfile 与 Compose runtime 的 `OPENAPI_REQUEST_VALIDATION_ENABLED` 统一为 `true`；production 未显式配置时也会执行 OpenAPI schema、native format 与 `x-validation` custom rules。
+- 显式 `OPENAPI_REQUEST_VALIDATION_ENABLED=false` 继续保留为短期应急 break-glass。它会跳过 path/query/header/cookie/body/content-type schema 与 custom rule 校验，但已装配的 OpenAPI security bridge 仍执行认证/授权；由于 handler 已不再补做字段合法性校验，该开关不得作为常态部署策略。
+- `OPENAPI_ENABLED` 的职责未变化：仅控制 `/openapi.yaml` 与 `/swagger/*` 文档入口。production 保持 `OPENAPI_ENABLED=false` 时，默认开启的 request validation 与已装配的 security bridge 仍照常执行。
+- 至此 design 036 与 ADR-0028 冻结的阶段 1–6 目标态已全部落地。本阶段不新增业务 endpoint，不修改 OpenAPI spec/generated model、数据库、migration 或 sqlc。
 
 ## 2. 改动内容
 
@@ -34,6 +38,9 @@
   - auth parser 只 trim username/email，password 和 refresh token 保持原样；system echo message/tag 保持原样；user parser 保留分页默认值、筛选 trim、local date-time 到 `*time.Time` 的必要类型转换和 status/userId 映射。
   - 五个 nil body 防御统一改为 `requesterror.MalformedBody()`；handler 不再调用 `MissingBody`、`InvalidBody` 或 `InvalidParameters`。
   - service 层业务兜底未删除：分页边界、状态转换、userId、账号唯一、用户状态、refresh token/session 轮换等规则仍在原有 service/repository 边界执行。
+  - 阶段 6 将 `internal/config` 的 request validation 缺省值调整为与 profile 无关的 `true`；prod 仍默认 `OPENAPI_ENABLED=false`，两个开关没有合并或互相派生。
+  - `configs/{dev,test,prod}.env.example`、Dockerfile 与 `docker-compose.yml` 均显式声明 `OPENAPI_REQUEST_VALIDATION_ENABLED=true`。Compose 同步调整是为了避免仓库标准 `make compose-up` 流程覆盖镜像默认值并把 break-glass 变成常态。
+  - README 记录全环境默认开启、显式 `false` 的绕过风险与恢复要求，以及 `OPENAPI_ENABLED` 只控制文档路由、不影响 runtime contract/security bridge。
 - 删除了什么
   - 阶段 2 已删除 `requesterror.FieldErrors` production 主路径；请求字段错误不再输出 legacy flat details。
   - 阶段 5 删除 auth handler 的 username/email/password/login/refresh 私有字段规则、`net/mail`、username regexp、password composition helper 和 violation builder。
@@ -41,14 +48,16 @@
 - 文件移动和 package 边界变化
   - 无文件移动。
   - 阶段 5 改动限定在 `api/openapi/eventhub.yaml` 与 policy test、`internal/http/contract`、`internal/http/handler/{auth,user,system}`、HTTP/handler 测试和本 implementation/parity 文档；OpenAPI generated 文件经重生成确认无漂移，未修改 service/domain/repository、DTO、Command/Query/Result、数据库、migration、sqlc、缓存、配置、Docker 或认证实现。
+  - 阶段 6 改动限定在 `internal/config` 默认值及测试、env examples、Dockerfile/Compose、README 和本 implementation/parity 文档；未触碰 handler/service/domain/repository、OpenAPI spec/generated model、数据库、migration、sqlc、缓存或认证实现。
   - `validation.go` / `admin_validation.go` 文件名为控制阶段 diff 暂时保留，但内容已收敛为 parser/mapper；没有新增跨 package 依赖或结构性分层债务。
 - 具体类型、接口和测试替身
   - 阶段 4 只新增 package-private `customRuleRequestValues` 和 rule helper；未新增导出类型、接口、第三方依赖或 production test double。
   - `ValidationCatalog` 继续在启动后只读共享；每个请求的 body map、query 值和 violations slice 都是请求内局部状态，不需要锁或外部缓存。
   - 阶段 5 只新增 package-private email format 注册/helper 与 `localDateTime` custom evaluator；未新增导出 API、接口、第三方依赖或 test double。email 通过现有 kin-openapi registry 接入且只依赖 Go 标准库，`sync.Once` 只保护启动期全局 registry 写入。
+  - 阶段 6 未新增 production 类型、接口、第三方依赖或 test double；只调整既有配置函数、测试期望和部署配置。
 - 是否更新 Java-Go parity 记录
-  - 是。parity matrix 已记录阶段 5 的 contract email/local date-time 接管、handler 纯映射边界和 AST/行为测试证据，并同步修正 system/auth 行中的历史描述。
-  - 整体状态继续为“部分对齐”：字段 runtime 与 handler 收敛目标已完成，production / Docker 默认开启 request validation 仍是后续阶段。
+  - 是。parity matrix 已记录阶段 5 的 contract email/local date-time 接管、handler 纯映射边界和 AST/行为测试证据，并在阶段 6 补充生产默认入口策略。
+  - 阶段 1–6 的冻结目标已闭环，企业级字段校验体系状态更新为“已对齐”。
 
 ## 3. 为什么这样设计
 
@@ -61,11 +70,15 @@
   - 删除 handler 校验前先在 spec 声明并补齐 email 与真实 local date-time 的 contract 执行证据，避免规则从 handler 删除后变成未执行或隐式 Go 规则；email 复用 OpenAPI `format`，日期复用已冻结的 `x-validation.rules` 扩展形态，只把 evaluator 白名单增加到当前 parity 必需范围。
   - handler 的 invalid generated model 行为测试刻意断言“仍映射”，AST policy 则限制 `requesterror` 只用于 `MalformedBody`，分别从行为和依赖两侧防止规则回流。
   - user query 必须把 generated string 转为 service 的 `*time.Time`；正常 HTTP 路径已由 contract 保证可解析，直接调用 parser 时的解析失败作为 contract invariant 收敛为 `COMMON-500`，不伪装成 handler 字段校验。
+  - 阶段 5 已删除 handler 字段合法性校验；若 production 继续默认关闭 contract gate，会让正常生产入口绕过唯一运行时字段校验入口，因此阶段 6 默认开启是既定架构闭环。
+  - 文档暴露与运行时契约执行是两个不同的安全维度。production 继续隐藏 Swagger/OpenAPI 文档，不应同时关闭字段契约或基于 OpenAPI security requirement 的认证授权。
+  - 保留显式 `false` 是为了提供可恢复的运维应急手段；将其限定为 break-glass，可以兼顾紧急止损与默认开启的入口治理。
 - 与 Go 项目当前阶段的匹配点
   - 不引入 `go-playground/validator`，不恢复 Go embed / `SpecYAML()`，不改变 generated model/strict server 形状，也不开启 kin-openapi MultiError。
   - engine 只执行当前 parity 必需的 `notBlank`、`containsLetterAndDigit`、`localDateTime` 与 `notAfter`，不扩展为通用业务规则引擎；账号唯一、用户状态、token/session 语义仍属于 service/repository。
   - handler 字段校验已在阶段 5 删除；parser 继续依赖 generated model、service contract、normalize 工具和 nil body 错误构造，不依赖 contract catalog。
   - service/domain/repository 不依赖 generated model、contract 或 requesterror；依赖方向未变化。
+  - 阶段 6 不改变 request validator/provider/router 实现，只让应用、示例与 Docker 默认配置采用阶段 1–5 已验证的运行时路径。
 - 与 Java 版业务语义的对齐方式
   - `notBlank` 对齐 Java `@NotBlank` 的空白拒绝意图；Go 使用 `strings.TrimSpace`，对 Unicode 空白的覆盖略宽，是 Go 自然写法下的刻意小差异。
   - `containsLetterAndDigit` 对齐 Java password 正则中的 ASCII `[A-Za-z]` 与数字组合语义，不 trim、不回显 password。
@@ -73,6 +86,7 @@
   - `localDateTime` 对齐 Java request binding 对 `LocalDateTime` 真实日历值的拒绝语义；OpenAPI pattern 继续负责秒精度外形，custom rule 负责 2 月 30 日、25 点等语义值。
   - `notAfter` 对齐 Java `@AssertTrue`：任一边界缺失时通过、相等通过、from 晚于 to 时失败，violation 指向 left 字段并使用 spec 消息。
   - 外层 `COMMON-400`、请求体/请求参数 envelope message 和 violations 五字段保持不变；Go 只用 spec-first runtime 实现替代 Jakarta provider。
+  - Java Controller 的 Bean Validation 是正常请求入口默认能力；Go 通过 production 默认开启 contract gate 对齐该入口语义，同时保留 Go 部署侧显式 break-glass 的刻意运维差异。
 
 ## 4. 替代方案
 
@@ -94,6 +108,12 @@
   - 未采用。前者继续形成第二 transport 规则源；后者让 service 承担 OpenAPI 输入格式职责并破坏分层。
 - 方案 I：使用标准 OpenAPI `format: local-date-time`。
   - 未采用。oasdiff 会把四个既有 query 的标准 format 新增判为 `request-parameter-type-changed` breaking change；`x-validation.rules: localDateTime` 能准确记录既有 handler 行为迁移，同时复用冻结 extension 形态并通过 breaking gate。
+- 方案 J：production 继续默认关闭 request validation。
+  - 未采用。handler 已收敛为纯映射层，这会让生产默认路径绕过唯一字段校验入口。
+- 方案 K：让 `OPENAPI_ENABLED` 同时控制文档入口和 runtime contract。
+  - 未采用。隐藏文档不应关闭字段契约或 security bridge，两者职责与风险边界不同。
+- 方案 L：彻底删除显式关闭能力。
+  - 未采用。会失去紧急客户端兼容或故障排查时的短期恢复手段；当前以有明确风险说明的 break-glass 保留。
 
 ## 5. 测试与验证
 
@@ -110,10 +130,23 @@
 - `git diff --check`：通过。
 - Java-Go parity 验证：现有 policy test 继续锁定 Java DTO 字段消息；contract negative tests 锁定 email 与管理员时间消息；handler 行为/AST tests 固定 Go spec-first 的刻意结构差异；service 既有测试继续覆盖状态、分页、userId、账号唯一与 token/session 业务兜底。
 - 不适用项：未修改 SQL、schema、migration 或 sqlc 配置，因此不运行 `sqlc generate` 和 migration 测试。
+- 阶段 6 验证：
+  - `gofmt`：`internal/config/{profile.go,config.go,config_test.go}` 已格式化。
+  - `go test ./internal/config -count=1`：通过；覆盖 production 文档入口默认关闭、request validation 默认开启、非法布尔值回退开启，以及 production 显式 `false` break-glass。
+  - `make openapi-lint`：通过，Redocly 确认当前 OpenAPI 文档有效。
+  - `make openapi-check`：通过，kin-openapi validate、models/server 重生成与 generated diff 检查均无漂移。
+  - `go test ./...`：通过；包含配置默认值、provider/router、contract/security bridge 和阶段 1–5 字段校验回归测试。
+  - `go vet ./...`：通过。
+  - `make lint`：通过，golangci-lint 报告 `0 issues`。
+  - `git diff --check`：通过。
+- 阶段 6 静态核验：三个 env example、Dockerfile 与 Compose runtime 默认均为 `true`；production 文档入口仍默认关闭；provider/router 继续以独立分支装配文档入口和 runtime contract/security bridge。
+- 阶段 6 Java-Go parity：Java Controller 的 Bean Validation 默认入口语义已由 Go production 默认开启 contract gate 对齐；Go 额外保留显式 `false` 作为有风险说明的短期运维 break-glass。
+- 阶段 6 不适用项：未修改 OpenAPI spec、SQL、schema、migration 或 sqlc 配置，因此不运行 `make openapi-breaking-check`、`sqlc generate` 和 migration 测试。
 
 ## 6. 已知限制
 
-- production / Docker 的 request validation 默认策略尚未调整；显式关闭 validation 时 schema/custom/email/local-date-time rules 都会跳过，handler 也不再提供字段校验。这是保留 break-glass 开关的预期代价，下一阶段必须完成默认开启与部署说明。
+- 显式 `OPENAPI_REQUEST_VALIDATION_ENABLED=false` 会绕过 schema/native/custom 字段规则；由于 handler 不再兜底校验，无效字段可能继续到 generated binder 或 service 防御边界。该配置必须限时使用、配套监控，并在应急结束后恢复为 `true`。
+- 即使 `OPENAPI_ENABLED=false`，request validation 默认开启或已装配认证能力时仍需加载 `OPENAPI_SPEC_PATH`；部署必须继续携带可读取、可校验的 OpenAPI spec。
 - user parser 为了映射 service `*time.Time` 仍执行必要类型转换；正常 production route 已由 contract 保证可解析，直接绕过 contract 调用 parser 的非法日期会返回 `COMMON-500` invariant，而不是 handler 字段错误。
 - kin-openapi string format registry 是进程级状态；阶段 5 只用 `sync.Once` 注册冻结契约需要的 `email` evaluator。未来新增 format 必须同时有 spec、catalog message 和 runtime negative test。
 - native schema validation 未开启 MultiError，通常只返回首条 schema violation；custom engine 已支持按稳定顺序聚合多条 custom violations，但不与 schema failure 混合。
@@ -131,7 +164,8 @@
 - 对微服务 / 云原生演进的影响
   - catalog 启动期编译、请求期只读且 violations 不依赖单体 service/domain；未来拆分服务时可复用同一 transport contract。
 - 对后续 Go package、migration、sqlc、OpenAPI 或测试策略的影响
-  - production / Docker 默认开启 request validation 仍需独立阶段实施并保留 break-glass 说明。
+  - production / Docker 默认入口契约已经闭环；后续部署应保持 request validation 开启，显式 `false` 仅作为 break-glass。
+  - design 036 不再有待完成实施阶段；后续新增字段或 custom rule 仍必须沿 spec -> policy/catalog -> runtime engine -> parity test 的路径演进。
   - 新增 custom rule 必须先扩展 spec/policy/catalog parser，再实现 engine 与 parity tests，不能直接在 handler 或 service 增加 transport 校验。
   - 新增 handler parser 时应复用阶段 5 的 AST/行为边界：只映射/normalize，nil body 可防御，字段合法性必须先在 spec + contract 中闭环。
   - 本阶段不影响 migration、sqlc、缓存、事务、JWT claim 或 service/domain/repository 依赖方向。

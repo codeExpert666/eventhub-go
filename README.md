@@ -12,6 +12,7 @@ Java 版参考项目：
 
 - HTTP foundation：应用入口、router、server、requestId、recover、统一响应、错误码、分页、system ping/echo/health/info。
 - OpenAPI / Swagger：spec-first `api/openapi/eventhub.yaml`，dev/test 默认开启，prod 默认关闭。
+- 企业级字段校验：OpenAPI spec 是字段规则与消息的唯一契约源，runtime request validation 在 dev/test/prod 与 Docker 中默认开启。
 - Auth / user 基础能力：注册、登录、refresh、logout、当前用户、管理员用户查询与状态更新。
 - 持久化底座：MySQL migration、sqlc、repository/mysql、Testcontainers MySQL 集成测试。
 - 本地工程闭环：Dockerfile、Docker Compose、Makefile 质量门禁、golangci-lint 配置与 Docker fallback。
@@ -66,7 +67,7 @@ curl http://localhost:8080/actuator/health
 make compose-down
 ```
 
-Compose 中 app 使用 prod-like 本地演示配置，`OPENAPI_ENABLED=false`，因此默认不会暴露 Swagger / OpenAPI。Compose 示例密码和 token secret 只适合本地演示，不能用于生产。
+Compose 中 app 使用 prod-like 本地演示配置，`OPENAPI_ENABLED=false`，因此默认不会暴露 Swagger / OpenAPI；`OPENAPI_REQUEST_VALIDATION_ENABLED=true`，业务 API 仍执行 runtime request contract 与 security bridge。Compose 示例密码和 token secret 只适合本地演示，不能用于生产。
 
 ## 本机开发启动
 
@@ -179,10 +180,12 @@ OpenAPI 相关门禁分工：
 - `EVENTHUB_ENV=prod` 时，`OPENAPI_ENABLED` 默认关闭。
 - `OPENAPI_ASSET_ROOT` 指向 OpenAPI YAML 与 Swagger UI 本地静态资源根目录；本地默认填相对路径 `api/openapi`，这适用于从仓库根目录启动（相对路径按进程当前工作目录解析），容器默认填绝对路径 `/app/api/openapi`。
 - `OPENAPI_ENABLED=true` 时会在启动期校验 `OPENAPI_ASSET_ROOT` 下的 `eventhub.yaml` 和 Swagger UI HTML/CSS/JS 是否存在；资源缺失会启动失败，禁用时不校验也不注册文档路由。
-- `OPENAPI_REQUEST_VALIDATION_ENABLED` 独立控制 runtime path/query/body/content-type request validation；dev/test 默认开启，prod 默认关闭，不受 `OPENAPI_ENABLED` 影响。
+- `OPENAPI_REQUEST_VALIDATION_ENABLED` 独立控制 runtime path/query/header/cookie/body/content-type schema 与 custom rule 校验；dev/test/prod 均默认开启，不受 `OPENAPI_ENABLED` 影响。
+- 显式设置 `OPENAPI_REQUEST_VALIDATION_ENABLED=false` 仅用于短期应急 break-glass：它会跳过字段 schema/custom rule 校验，且 handler 不再兜底执行字段合法性校验。应急结束后必须恢复为 `true`。
 - `OPENAPI_SPEC_PATH` 指向 runtime contract/security bridge 读取的 OpenAPI YAML 文件；本地默认 `api/openapi/eventhub.yaml`，容器 / prod-like 环境建议使用 `/app/api/openapi/eventhub.yaml`。
-- OpenAPI `security: BearerAuth` 与 `x-required-roles` 是运行时认证/授权事实来源；已装配认证能力时，即使关闭 `OPENAPI_REQUEST_VALIDATION_ENABLED`，认证/授权仍会执行。
-- Dockerfile runtime 默认 `EVENTHUB_ENV=prod`、`OPENAPI_ENABLED=false`、`OPENAPI_ASSET_ROOT=/app/api/openapi`、`OPENAPI_REQUEST_VALIDATION_ENABLED=false` 且 `OPENAPI_SPEC_PATH=/app/api/openapi/eventhub.yaml`。
+- `OPENAPI_ENABLED` 只控制 `/openapi.yaml` 与 `/swagger/*` 文档入口；设为 `false` 不会关闭 runtime request contract 或 security bridge。
+- OpenAPI `security: BearerAuth` 与 `x-required-roles` 是运行时认证/授权事实来源；已装配认证能力时，即使 break-glass 关闭 request validation，认证/授权仍会执行。
+- Dockerfile 与 Compose runtime 默认 `EVENTHUB_ENV=prod`、`OPENAPI_ENABLED=false`、`OPENAPI_ASSET_ROOT=/app/api/openapi`、`OPENAPI_REQUEST_VALIDATION_ENABLED=true` 且 `OPENAPI_SPEC_PATH=/app/api/openapi/eventhub.yaml`。
 - 生产环境必须显式注入 `EVENTHUB_ACCESS_TOKEN_SIGNING_SECRET` 和真实数据库/Redis 凭据。
 
 ## 目录结构

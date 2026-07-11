@@ -52,7 +52,8 @@ type Config struct {
 	// AuthToken 保存 access token 和 refresh token 的签发配置。
 	AuthToken AuthTokenConfig
 
-	// OpenAPI 保存接口文档入口配置。生产环境默认关闭，避免暴露接口契约。
+	// OpenAPI 分别保存接口文档入口与运行时请求契约配置。
+	// 生产环境默认关闭文档入口，但默认开启运行时请求校验。
 	OpenAPI OpenAPIConfig
 }
 
@@ -115,7 +116,7 @@ type OpenAPIConfig struct {
 	Enabled bool
 	// AssetRoot 指向 OpenAPI YAML 与 Swagger UI 静态资源所在的本地目录；相对路径按进程当前工作目录解析。
 	AssetRoot string
-	// RequestValidationEnabled 控制是否在启动期装配 OpenAPI request contract gate。
+	// RequestValidationEnabled 控制是否执行 OpenAPI 请求字段契约校验；认证能力存在时 security bridge 仍独立装配。
 	RequestValidationEnabled bool
 	// SpecPath 指向 runtime request contract gate 读取的 OpenAPI YAML 文件；相对路径按进程当前工作目录解析。
 	SpecPath string
@@ -168,7 +169,7 @@ func Load() Config {
 		OpenAPI: OpenAPIConfig{
 			Enabled:                  getEnvBool("OPENAPI_ENABLED", defaultOpenAPIEnabled(env)),
 			AssetRoot:                getEnv("OPENAPI_ASSET_ROOT", openapispec.AssetRoot),
-			RequestValidationEnabled: getEnvBool("OPENAPI_REQUEST_VALIDATION_ENABLED", defaultOpenAPIRequestValidationEnabled(env)),
+			RequestValidationEnabled: getEnvBool("OPENAPI_REQUEST_VALIDATION_ENABLED", defaultOpenAPIRequestValidationEnabled()),
 			SpecPath:                 getEnv("OPENAPI_SPEC_PATH", openapispec.DefaultSpecPath),
 		},
 	}
