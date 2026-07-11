@@ -354,7 +354,7 @@ func TestOpenAPIRequestContractGateRejectsInvalidQueryBeforeSecurity(t *testing.
 	recorder := performRequest(testRouterWithRequestContract(t), nethttp.MethodGet, "/api/v1/admin/users?page=0", nil, nil)
 
 	body := assertValidationError(t, recorder, "请求参数校验失败")
-	assertSingleViolation(t, body, "query", "page", "page", "minimum", "page 不符合查询参数契约")
+	assertSingleViolation(t, body, "query", "page", "page", "minimum", "页码不能小于 1")
 }
 
 func TestOpenAPIRequestContractGateRejectsInvalidPathBeforeSecurity(t *testing.T) {
@@ -419,7 +419,7 @@ func TestOpenAPIRequestContractGateRejectsRequiredBodyField(t *testing.T) {
 	)
 
 	body := assertValidationError(t, recorder, "请求体参数校验失败")
-	assertSingleViolation(t, body, "body", "message", "message", "required", "")
+	assertSingleViolation(t, body, "body", "message", "message", "required", "message 不能为空")
 }
 
 func TestOpenAPIRequestContractGateRejectsBodySchemaViolation(t *testing.T) {
@@ -445,7 +445,7 @@ func TestOpenAPIRequestContractGateRejectsEchoSchemaLengthViolation(t *testing.T
 	)
 
 	body := assertValidationError(t, recorder, "请求体参数校验失败")
-	assertSingleViolation(t, body, "body", "message", "message", "maxLength", "")
+	assertSingleViolation(t, body, "body", "message", "message", "maxLength", "message 长度不能超过 64")
 }
 
 func TestOpenAPIRequestContractGateRejectsEchoTagSchemaLengthViolation(t *testing.T) {
@@ -458,7 +458,7 @@ func TestOpenAPIRequestContractGateRejectsEchoTagSchemaLengthViolation(t *testin
 	)
 
 	body := assertValidationError(t, recorder, "请求体参数校验失败")
-	assertSingleViolation(t, body, "body", "tag", "tag", "maxLength", "")
+	assertSingleViolation(t, body, "body", "tag", "tag", "maxLength", "tag 长度不能超过 32")
 }
 
 func TestOpenAPIRequestContractGateRejectsInvalidStatusQueryBeforeHandler(t *testing.T) {
@@ -471,7 +471,7 @@ func TestOpenAPIRequestContractGateRejectsInvalidStatusQueryBeforeHandler(t *tes
 	)
 
 	body := assertValidationError(t, recorder, "请求参数校验失败")
-	assertSingleViolation(t, body, "query", "status", "status", "enum", "status 不符合查询参数契约")
+	assertSingleViolation(t, body, "query", "status", "status", "enum", "用户状态只能是 ENABLED 或 DISABLED")
 }
 
 func TestOpenAPIRequestContractGateRejectsInvalidUpdateStatusBodyBeforeHandler(t *testing.T) {
@@ -484,7 +484,7 @@ func TestOpenAPIRequestContractGateRejectsInvalidUpdateStatusBodyBeforeHandler(t
 	)
 
 	body := assertValidationError(t, recorder, "请求体参数校验失败")
-	assertSingleViolation(t, body, "body", "status", "status", "enum", "")
+	assertSingleViolation(t, body, "body", "status", "status", "enum", "用户状态只能是 ENABLED 或 DISABLED")
 }
 
 func TestOpenAPIRequestContractGateReplaysBodyForStrictHandler(t *testing.T) {
