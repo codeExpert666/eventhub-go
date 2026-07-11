@@ -422,6 +422,108 @@ func TestOpenAPIRequestContractGateRejectsRequiredBodyField(t *testing.T) {
 	assertSingleViolation(t, body, "body", "message", "message", "required", "message 不能为空")
 }
 
+func TestOpenAPIRequestContractGateRejectsRealSpecCustomRulesBeforeDownstream(t *testing.T) {
+	spec, err := contract.LoadSpec(filepath.Join("..", "..", filepath.FromSlash(openapispec.DefaultSpecPath)))
+	if err != nil {
+		t.Fatalf("load request contract spec: %v", err)
+	}
+	validator, err := contract.NewRequestValidator(spec)
+	if err != nil {
+		t.Fatalf("new request validator: %v", err)
+	}
+	tests := []struct {
+		name     string
+		method   string
+		target   string
+		body     []byte
+		headers  map[string]string
+		location string
+		field    string
+		rule     string
+		message  string
+	}{
+		{
+			name:   "register",
+			method: nethttp.MethodPost,
+			target: "/api/v1/auth/register",
+			body:   []byte(`{"username":"contractregister","email":"contract@example.com","password":"abcdefgh"}`),
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			location: "body",
+			field:    "password",
+			rule:     "containsLetterAndDigit",
+			message:  "password 至少包含字母和数字",
+		},
+		{
+			name:     "login",
+			method:   nethttp.MethodPost,
+			target:   "/api/v1/auth/login",
+			body:     []byte(`{"usernameOrEmail":"   ","password":"Password123"}`),
+			headers:  map[string]string{"Content-Type": "application/json"},
+			location: "body",
+			field:    "usernameOrEmail",
+			rule:     "notBlank",
+			message:  "用户名或邮箱不能为空",
+		},
+		{
+			name:     "refresh",
+			method:   nethttp.MethodPost,
+			target:   "/api/v1/auth/refresh",
+			body:     []byte(`{"refreshToken":"   "}`),
+			headers:  map[string]string{"Content-Type": "application/json"},
+			location: "body",
+			field:    "refreshToken",
+			rule:     "notBlank",
+			message:  "refreshToken 不能为空",
+		},
+		{
+			name:     "echo",
+			method:   nethttp.MethodPost,
+			target:   "/api/v1/system/echo",
+			body:     []byte(`{"message":"   "}`),
+			headers:  map[string]string{"Content-Type": "application/json"},
+			location: "body",
+			field:    "message",
+			rule:     "notBlank",
+			message:  "message 不能为空",
+		},
+		{
+			name:     "admin users",
+			method:   nethttp.MethodGet,
+			target:   "/api/v1/admin/users?createdAtFrom=2026-01-02T00:00:00&createdAtTo=2026-01-01T00:00:00",
+			location: "query",
+			field:    "createdAtFrom",
+			rule:     "notAfter",
+			message:  "createdAtFrom 不能晚于 createdAtTo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			downstreamCalled := false
+			handler := middleware.RequestID(testLogger())(
+				validator.Middleware(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+					downstreamCalled = true
+					w.WriteHeader(nethttp.StatusNoContent)
+				})),
+			)
+
+			recorder := performRequest(handler, tt.method, tt.target, tt.body, tt.headers)
+
+			if downstreamCalled {
+				t.Fatal("invalid custom rule request must not reach downstream handler")
+			}
+			envelopeMessage := "请求体参数校验失败"
+			if tt.location == "query" {
+				envelopeMessage = "请求参数校验失败"
+			}
+			body := assertValidationError(t, recorder, envelopeMessage)
+			assertSingleViolation(t, body, tt.location, tt.field, tt.field, tt.rule, tt.message)
+		})
+	}
+}
+
 func TestOpenAPIRequestContractGateRejectsBodySchemaViolation(t *testing.T) {
 	recorder := performRequest(
 		testRouterWithRequestContract(t),

@@ -116,6 +116,17 @@ func (v *RequestValidator) Middleware(next http.Handler) http.Handler {
 			response.WriteError(w, r, appErrorFromValidationError(validateErr, v.validationCatalog))
 			return
 		}
+		if v.validateRequest {
+			violations, err := validateCustomRules(v.validationCatalog, input)
+			if err != nil {
+				response.WriteError(w, r, apperror.Wrap(apperror.CommonInternal, "", err))
+				return
+			}
+			if appErr := appErrorFromCustomRuleViolations(violations); appErr != nil {
+				response.WriteError(w, r, appErr)
+				return
+			}
+		}
 
 		next.ServeHTTP(w, r)
 	})

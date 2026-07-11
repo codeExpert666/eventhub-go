@@ -330,43 +330,6 @@ paths:
 	}
 }
 
-func TestRequestValidatorDoesNotExecuteCustomRulesInCatalogPhase(t *testing.T) {
-	handler := testRequestContractHandler(t, validationCatalogRuntimeSpec)
-	tests := []struct {
-		name   string
-		method string
-		target string
-		body   string
-	}{
-		{name: "notBlank", method: http.MethodPost, target: "/profiles", body: `{"name":"  "}`},
-		{name: "containsLetterAndDigit", method: http.MethodPost, target: "/profiles", body: `{"name":"alice","password":"abcdefgh"}`},
-		{
-			name:   "notAfter",
-			method: http.MethodGet,
-			target: "/profiles?createdAtFrom=2026-01-02T00:00:00&createdAtTo=2026-01-01T00:00:00",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var body io.Reader
-			if tt.body != "" {
-				body = strings.NewReader(tt.body)
-			}
-			request := httptest.NewRequest(tt.method, tt.target, body)
-			if tt.body != "" {
-				request.Header.Set("Content-Type", "application/json")
-			}
-			recorder := httptest.NewRecorder()
-
-			handler.ServeHTTP(recorder, request)
-
-			if recorder.Code != http.StatusNoContent {
-				t.Fatalf("custom rules must not execute in catalog phase: status=%d body=%s", recorder.Code, recorder.Body.String())
-			}
-		})
-	}
-}
-
 func TestRequestValidatorMapsHeaderParameterViolation(t *testing.T) {
 	handler := testRequestContractHandler(t, `openapi: 3.0.3
 info:

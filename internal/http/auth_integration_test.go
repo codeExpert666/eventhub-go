@@ -180,6 +180,116 @@ func TestAuthRefreshEndpointRejectsBlankRefreshToken(t *testing.T) {
 	assertSingleViolation(t, body, "body", "refreshToken", "refreshToken", "notBlank", "refreshToken 不能为空")
 }
 
+func TestOpenAPIContractRejectsCustomRuleViolations(t *testing.T) {
+	router, _ := testAuthRouter(t)
+	adminToken := loginAndReturnAccessToken(t, router, "admin", "Admin123456")
+	tests := []struct {
+		name     string
+		method   string
+		target   string
+		body     []byte
+		headers  map[string]string
+		location string
+		field    string
+		rule     string
+		message  string
+	}{
+		{
+			name:   "register password composition",
+			method: http.MethodPost,
+			target: "/api/v1/auth/register",
+			body: jsonBody(t, map[string]string{
+				"username": "customregister",
+				"email":    "customregister@example.com",
+				"password": "abcdefgh",
+			}),
+			headers:  jsonHeaders(),
+			location: "body",
+			field:    "password",
+			rule:     "containsLetterAndDigit",
+			message:  "password 至少包含字母和数字",
+		},
+		{
+			name:   "login identifier not blank",
+			method: http.MethodPost,
+			target: "/api/v1/auth/login",
+			body: jsonBody(t, map[string]string{
+				"usernameOrEmail": "   ",
+				"password":        "Password123",
+			}),
+			headers:  jsonHeaders(),
+			location: "body",
+			field:    "usernameOrEmail",
+			rule:     "notBlank",
+			message:  "用户名或邮箱不能为空",
+		},
+		{
+			name:     "refresh token not blank",
+			method:   http.MethodPost,
+			target:   "/api/v1/auth/refresh",
+			body:     jsonBody(t, map[string]string{"refreshToken": "   "}),
+			headers:  jsonHeaders(),
+			location: "body",
+			field:    "refreshToken",
+			rule:     "notBlank",
+			message:  "refreshToken 不能为空",
+		},
+		{
+			name:     "echo message not blank",
+			method:   http.MethodPost,
+			target:   "/api/v1/system/echo",
+			body:     jsonBody(t, map[string]string{"message": "   "}),
+			headers:  jsonHeaders(),
+			location: "body",
+			field:    "message",
+			rule:     "notBlank",
+			message:  "message 不能为空",
+		},
+		{
+			name:     "admin created time range",
+			method:   http.MethodGet,
+			target:   "/api/v1/admin/users?createdAtFrom=2026-01-02T00:00:00&createdAtTo=2026-01-01T00:00:00",
+			headers:  map[string]string{"Authorization": "Bearer " + adminToken},
+			location: "query",
+			field:    "createdAtFrom",
+			rule:     "notAfter",
+			message:  "createdAtFrom 不能晚于 createdAtTo",
+		},
+		{
+			name:     "admin updated time range",
+			method:   http.MethodGet,
+			target:   "/api/v1/admin/users?updatedAtFrom=2026-01-02T00:00:00&updatedAtTo=2026-01-01T00:00:00",
+			headers:  map[string]string{"Authorization": "Bearer " + adminToken},
+			location: "query",
+			field:    "updatedAtFrom",
+			rule:     "notAfter",
+			message:  "updatedAtFrom 不能晚于 updatedAtTo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := performRequest(router, tt.method, tt.target, tt.body, tt.headers)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+			}
+			body := decodeAPIResponse(t, recorder)
+			if body["code"] != "COMMON-400" {
+				t.Fatalf("unexpected code: %v", body["code"])
+			}
+			envelopeMessage := "请求体参数校验失败"
+			if tt.location == "query" {
+				envelopeMessage = "请求参数校验失败"
+			}
+			if body["message"] != envelopeMessage {
+				t.Fatalf("unexpected message: got %v want %s", body["message"], envelopeMessage)
+			}
+			assertSingleViolation(t, body, tt.location, tt.field, tt.field, tt.rule, tt.message)
+		})
+	}
+}
+
 func TestAuthLogoutEndpointRequiresAuthentication(t *testing.T) {
 	router, _ := testAuthRouter(t)
 
@@ -415,6 +525,20 @@ func TestOpenAPIContractSecurityBridgeRejectsMissingTokenBeforeBodyDecode(t *tes
 		"/api/v1/admin/users/1/status",
 		[]byte(`{"status"`),
 		map[string]string{"Content-Type": "application/json"},
+	)
+
+	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")
+}
+
+func TestOpenAPIContractSecurityBridgeRejectsMissingTokenBeforeCustomRules(t *testing.T) {
+	router, _ := testAuthRouterWithRequestContract(t, nil)
+
+	recorder := performRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/admin/users?createdAtFrom=2026-01-02T00:00:00&createdAtTo=2026-01-01T00:00:00",
+		nil,
+		nil,
 	)
 
 	assertHTTPError(t, recorder, http.StatusUnauthorized, "AUTH-401", "请先登录或重新登录")

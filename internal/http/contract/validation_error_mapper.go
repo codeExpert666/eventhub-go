@@ -61,6 +61,29 @@ func appErrorFromValidationError(err error, catalog *ValidationCatalog) *apperro
 	}})
 }
 
+func appErrorFromCustomRuleViolations(violations requesterror.Violations) *apperror.AppError {
+	if len(violations) == 0 {
+		return nil
+	}
+	location := violations[0].Location
+	for _, violation := range violations[1:] {
+		if violation.Location != location {
+			return requesterror.InvalidParameters(violations)
+		}
+	}
+
+	switch location {
+	case requesterror.LocationBody:
+		return requesterror.InvalidBody(violations)
+	case requesterror.LocationHeader:
+		return requesterror.InvalidHeaders(violations)
+	case requesterror.LocationCookie:
+		return requesterror.InvalidCookies(violations)
+	default:
+		return requesterror.InvalidParameters(violations)
+	}
+}
+
 func unsupportedContentType(requestErr *openapi3filter.RequestError) bool {
 	if strings.Contains(requestErr.Reason, "Content-Type") {
 		return true
