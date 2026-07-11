@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -47,7 +48,11 @@ func registerOpenAPIRoutes(router chi.Router, deps RouterDependencies) {
 }
 
 // writeOpenAPIRequestBodyError 将 strict handler 的 JSON body 解码错误映射为统一请求体格式错误。
-func writeOpenAPIRequestBodyError(w http.ResponseWriter, r *http.Request, _ error) {
+func writeOpenAPIRequestBodyError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, io.EOF) {
+		response.WriteError(w, r, requesterror.MissingBody())
+		return
+	}
 	response.WriteError(w, r, requesterror.MalformedBody())
 }
 
@@ -58,12 +63,14 @@ func writeOpenAPIResponseError(w http.ResponseWriter, r *http.Request, err error
 
 // writeOpenAPIParameterError 将 generated chi wrapper 的 path/query 绑定错误写成统一参数校验响应。
 func writeOpenAPIParameterError(w http.ResponseWriter, r *http.Request, err error) {
-	response.WriteError(w, r, parameterValidationError(err))
+	response.WriteError(w, r, parameterValidationError(r, err))
 }
 
 // parameterValidationError 从 oapi-codegen 参数错误中提取字段名，并转成前端稳定可读的字段错误。
-func parameterValidationError(err error) *apperror.AppError {
+func parameterValidationError(r *http.Request, err error) *apperror.AppError {
 	field := "parameter"
+	rule := "type"
+	requiredParameter := false
 	var invalidFormat *openapigen.InvalidParamFormatError
 	if errors.As(err, &invalidFormat) {
 		field = invalidFormat.ParamName
@@ -71,15 +78,63 @@ func parameterValidationError(err error) *apperror.AppError {
 	var tooManyValues *openapigen.TooManyValuesForParamError
 	if errors.As(err, &tooManyValues) {
 		field = tooManyValues.ParamName
+		rule = "maxItems"
+	}
+	var required *openapigen.RequiredParamError
+	if errors.As(err, &required) {
+		field = required.ParamName
+		rule = "required"
+		requiredParameter = true
+	}
+	var requiredHeader *openapigen.RequiredHeaderError
+	if errors.As(err, &requiredHeader) {
+		field = requiredHeader.ParamName
+		return requesterror.InvalidHeaders(requesterror.Violations{{
+			Location: requesterror.LocationHeader,
+			Field:    field,
+			Path:     field,
+			Rule:     "required",
+			Message:  field + " 不能为空",
+		}})
 	}
 
 	message := field + " 格式不合法"
 	// page/size/userId 是当前 OpenAPI 参数中对用户最常见的输入错误，保留更明确的中文提示。
-	switch field {
-	case "page", "size":
-		message = field + " 必须是整数"
-	case "userId":
-		message = "userId 必须是正整数"
+	if requiredParameter {
+		message = field + " 不能为空"
+	} else {
+		switch field {
+		case "page", "size":
+			message = field + " 必须是整数"
+		case "userId":
+			message = "userId 必须是正整数"
+		}
 	}
-	return requesterror.InvalidParameters(requesterror.FieldErrors{field: message})
+	location := requesterror.LocationQuery
+	if routeParameter(r, field) {
+		location = requesterror.LocationPath
+	}
+	return requesterror.InvalidParameters(requesterror.Violations{{
+		Location: location,
+		Field:    field,
+		Path:     field,
+		Rule:     rule,
+		Message:  message,
+	}})
+}
+
+func routeParameter(r *http.Request, field string) bool {
+	if r == nil {
+		return false
+	}
+	routeContext := chi.RouteContext(r.Context())
+	if routeContext == nil {
+		return false
+	}
+	for _, key := range routeContext.URLParams.Keys {
+		if key == field {
+			return true
+		}
+	}
+	return false
 }

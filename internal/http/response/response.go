@@ -60,10 +60,13 @@ func errorResponse(ctx context.Context, err *apperror.AppError) openapigen.Error
 	}
 }
 
-func detailsData(details apperror.Details) *map[string]interface{} {
+func detailsData(details apperror.Details) *openapigen.ErrorResponse_Data {
 	if details == nil {
 		return nil
 	}
-	data := map[string]interface{}(details)
+	data := openapigen.ErrorResponse_Data{}
+	for field, value := range details {
+		data.Set(field, value)
+	}
 	return &data
 }

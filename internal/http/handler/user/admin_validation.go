@@ -14,7 +14,7 @@ import (
 const localDateTimeLayout = "2006-01-02T15:04:05"
 
 func parseAdminUserListQuery(params openapigen.ListAdminUsersParams) (usersvc.AdminUserListQuery, *apperror.AppError) {
-	fields := requesterror.FieldErrors{}
+	violations := requesterror.Violations{}
 	query := usersvc.AdminUserListQuery{
 		Page: page.DefaultPage,
 		Size: page.DefaultSize,
@@ -35,38 +35,42 @@ func parseAdminUserListQuery(params openapigen.ListAdminUsersParams) (usersvc.Ad
 	if params.Status != nil {
 		query.Status = strings.TrimSpace(string(*params.Status))
 	}
-	query.CreatedAtFrom = parseTimeParam(params.CreatedAtFrom, "createdAtFrom", fields)
-	query.CreatedAtTo = parseTimeParam(params.CreatedAtTo, "createdAtTo", fields)
-	query.UpdatedAtFrom = parseTimeParam(params.UpdatedAtFrom, "updatedAtFrom", fields)
-	query.UpdatedAtTo = parseTimeParam(params.UpdatedAtTo, "updatedAtTo", fields)
+	query.CreatedAtFrom = parseTimeParam(params.CreatedAtFrom, "createdAtFrom", &violations)
+	query.CreatedAtTo = parseTimeParam(params.CreatedAtTo, "createdAtTo", &violations)
+	query.UpdatedAtFrom = parseTimeParam(params.UpdatedAtFrom, "updatedAtFrom", &violations)
+	query.UpdatedAtTo = parseTimeParam(params.UpdatedAtTo, "updatedAtTo", &violations)
 
 	if len(query.Username) > 32 {
-		fields["username"] = "用户名筛选长度不能超过 32"
+		violations = append(violations, queryViolation("username", "maxLength", "用户名筛选长度不能超过 32"))
 	}
 	if len(query.Email) > 128 {
-		fields["email"] = "邮箱筛选长度不能超过 128"
+		violations = append(violations, queryViolation("email", "maxLength", "邮箱筛选长度不能超过 128"))
 	}
 	if query.CreatedAtFrom != nil && query.CreatedAtTo != nil && query.CreatedAtFrom.After(*query.CreatedAtTo) {
-		fields["createdAtFrom"] = "createdAtFrom 不能晚于 createdAtTo"
+		violations = append(violations, queryViolation("createdAtFrom", "notAfter", "createdAtFrom 不能晚于 createdAtTo"))
 	}
 	if query.UpdatedAtFrom != nil && query.UpdatedAtTo != nil && query.UpdatedAtFrom.After(*query.UpdatedAtTo) {
-		fields["updatedAtFrom"] = "updatedAtFrom 不能晚于 updatedAtTo"
+		violations = append(violations, queryViolation("updatedAtFrom", "notAfter", "updatedAtFrom 不能晚于 updatedAtTo"))
 	}
 
-	if len(fields) > 0 {
-		return usersvc.AdminUserListQuery{}, requesterror.InvalidParameters(fields)
+	if len(violations) > 0 {
+		return usersvc.AdminUserListQuery{}, requesterror.InvalidParameters(violations)
 	}
 	return query, nil
 }
 
 func parseUpdateUserStatusCommand(userID int64, request *openapigen.UpdateUserStatusRequest) (usersvc.UpdateUserStatusCommand, *apperror.AppError) {
 	if userID <= 0 {
-		return usersvc.UpdateUserStatusCommand{}, requesterror.InvalidParameters(requesterror.FieldErrors{
-			"userId": "userId 必须是正整数",
-		})
+		return usersvc.UpdateUserStatusCommand{}, requesterror.InvalidParameters(requesterror.Violations{{
+			Location: requesterror.LocationPath,
+			Field:    "userId",
+			Path:     "userId",
+			Rule:     "minimum",
+			Message:  "userId 必须是正整数",
+		}})
 	}
 	if request == nil {
-		return usersvc.UpdateUserStatusCommand{}, requesterror.MalformedBody()
+		return usersvc.UpdateUserStatusCommand{}, requesterror.MissingBody()
 	}
 
 	return usersvc.UpdateUserStatusCommand{
@@ -75,7 +79,7 @@ func parseUpdateUserStatusCommand(userID int64, request *openapigen.UpdateUserSt
 	}, nil
 }
 
-func parseTimeParam(rawValue *string, name string, fields requesterror.FieldErrors) *time.Time {
+func parseTimeParam(rawValue *string, name string, violations *requesterror.Violations) *time.Time {
 	if rawValue == nil {
 		return nil
 	}
@@ -85,8 +89,18 @@ func parseTimeParam(rawValue *string, name string, fields requesterror.FieldErro
 	}
 	parsed, err := time.Parse(localDateTimeLayout, raw)
 	if err != nil {
-		fields[name] = name + " 格式不合法"
+		*violations = append(*violations, queryViolation(name, "pattern", name+" 格式不合法"))
 		return nil
 	}
 	return &parsed
+}
+
+func queryViolation(field, rule, message string) requesterror.Violation {
+	return requesterror.Violation{
+		Location: requesterror.LocationQuery,
+		Field:    field,
+		Path:     field,
+		Rule:     rule,
+		Message:  message,
+	}
 }

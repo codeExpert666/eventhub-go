@@ -123,9 +123,13 @@ func appErrorFromValidationError(err error) *apperror.AppError {
 
 	var requestErr *openapi3filter.RequestError
 	if !errors.As(err, &requestErr) {
-		return requesterror.InvalidParameters(requesterror.FieldErrors{
-			"request": "请求不符合 OpenAPI 契约",
-		})
+		return requesterror.InvalidParameters(requesterror.Violations{{
+			Location: requesterror.LocationQuery,
+			Field:    "request",
+			Path:     "request",
+			Rule:     "contract",
+			Message:  "请求不符合 OpenAPI 契约",
+		}})
 	}
 
 	if parameter := requestErr.Parameter; parameter != nil {
@@ -133,14 +137,20 @@ func appErrorFromValidationError(err error) *apperror.AppError {
 		if name == "" {
 			name = "parameter"
 		}
-		fields := requesterror.FieldErrors{name: parameterErrorMessage(parameter, requestErr)}
+		violations := requesterror.Violations{{
+			Location: parameterLocation(parameter.In),
+			Field:    name,
+			Path:     name,
+			Rule:     validationRule(requestErr.Err),
+			Message:  parameterErrorMessage(parameter, requestErr),
+		}}
 		switch parameter.In {
 		case openapi3.ParameterInHeader:
-			return requesterror.InvalidHeaders(fields)
+			return requesterror.InvalidHeaders(violations)
 		case openapi3.ParameterInCookie:
-			return requesterror.InvalidCookies(fields)
+			return requesterror.InvalidCookies(violations)
 		default:
-			return requesterror.InvalidParameters(fields)
+			return requesterror.InvalidParameters(violations)
 		}
 	}
 
@@ -149,17 +159,34 @@ func appErrorFromValidationError(err error) *apperror.AppError {
 			return requesterror.UnsupportedContentType(contentType(requestErr))
 		}
 		if errors.Is(requestErr.Err, openapi3filter.ErrInvalidRequired) {
-			return requesterror.MalformedBody()
+			return requesterror.MissingBody()
 		}
 		if malformedBody(requestErr) {
 			return requesterror.MalformedBody()
 		}
-		return requesterror.InvalidBody(bodyFieldErrors(requestErr))
+		return requesterror.InvalidBody(bodyViolations(requestErr))
 	}
 
-	return requesterror.InvalidParameters(requesterror.FieldErrors{
-		"request": "请求不符合 OpenAPI 契约",
-	})
+	return requesterror.InvalidParameters(requesterror.Violations{{
+		Location: requesterror.LocationQuery,
+		Field:    "request",
+		Path:     "request",
+		Rule:     "contract",
+		Message:  "请求不符合 OpenAPI 契约",
+	}})
+}
+
+func parameterLocation(location string) string {
+	switch location {
+	case openapi3.ParameterInPath:
+		return requesterror.LocationPath
+	case openapi3.ParameterInHeader:
+		return requesterror.LocationHeader
+	case openapi3.ParameterInCookie:
+		return requesterror.LocationCookie
+	default:
+		return requesterror.LocationQuery
+	}
 }
 
 func parameterErrorMessage(parameter *openapi3.Parameter, requestErr *openapi3filter.RequestError) string {
@@ -207,22 +234,52 @@ func malformedBody(requestErr *openapi3filter.RequestError) bool {
 	return parseErr.Kind != openapi3filter.KindUnsupportedFormat
 }
 
-func bodyFieldErrors(requestErr *openapi3filter.RequestError) requesterror.FieldErrors {
+func bodyViolations(requestErr *openapi3filter.RequestError) requesterror.Violations {
 	var schemaErr *openapi3.SchemaError
 	if errors.As(requestErr.Err, &schemaErr) {
 		field := "body"
+		path := "body"
 		if pointer := schemaErr.JSONPointer(); len(pointer) > 0 {
 			field = pointer[0]
+			path = strings.Join(pointer, ".")
 		}
 		message := schemaErr.Reason
 		if message == "" {
 			message = "字段不符合请求体 schema"
 		}
-		return requesterror.FieldErrors{field: message}
+		return requesterror.Violations{{
+			Location: requesterror.LocationBody,
+			Field:    field,
+			Path:     path,
+			Rule:     validationRule(schemaErr),
+			Message:  message,
+		}}
 	}
-	return requesterror.FieldErrors{
-		"body": "请求体不符合 OpenAPI schema",
+	return requesterror.Violations{{
+		Location: requesterror.LocationBody,
+		Field:    "body",
+		Path:     "body",
+		Rule:     validationRule(requestErr.Err),
+		Message:  "请求体不符合 OpenAPI schema",
+	}}
+}
+
+func validationRule(err error) string {
+	if errors.Is(err, openapi3filter.ErrInvalidRequired) {
+		return "required"
 	}
+	if errors.Is(err, openapi3filter.ErrInvalidEmptyValue) {
+		return "allowEmptyValue"
+	}
+	var schemaErr *openapi3.SchemaError
+	if errors.As(err, &schemaErr) && schemaErr.SchemaField != "" {
+		return schemaErr.SchemaField
+	}
+	var parseErr *openapi3filter.ParseError
+	if errors.As(err, &parseErr) {
+		return "type"
+	}
+	return "schema"
 }
 
 func validateSecurityRequirements(ctx context.Context, input *openapi3filter.RequestValidationInput) error {

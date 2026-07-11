@@ -31,6 +31,7 @@ func TestOpenAPIPolicy(t *testing.T) {
 
 	assertBearerAuthSecurityScheme(t, doc)
 	assertErrorResponseEnvelope(t, doc)
+	assertErrorResponseViolations(t, doc)
 
 	for _, item := range operations {
 		assertOperationMetadata(t, item)
@@ -319,6 +320,60 @@ func TestErrorResponseSchemaRequiresApiResponseEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(got, "must use ApiResponse as the top-level envelope") {
 		t.Fatalf("errorResponseEnvelopeViolation() = %q", got)
+	}
+}
+
+// TestErrorResponseSchemaRequiresViolationsContract 验证错误详情不能退回松散字段 map。
+func TestErrorResponseSchemaRequiresViolationsContract(t *testing.T) {
+	doc := &openapi3.T{
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"ErrorResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Properties: openapi3.Schemas{
+						"data": openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+					},
+				}),
+			},
+		},
+	}
+
+	got := errorResponseViolationsViolation(doc)
+	if got == "" {
+		t.Fatal("errorResponseViolationsViolation should reject ErrorResponse.data without violations")
+	}
+	if !strings.Contains(got, "violations") {
+		t.Fatalf("errorResponseViolationsViolation() = %q", got)
+	}
+}
+
+// TestErrorResponseViolationsMustStayOptional 防止字段错误结构误收窄全局 ErrorResponse.data。
+func TestErrorResponseViolationsMustStayOptional(t *testing.T) {
+	violationSchema := openapi3.NewObjectSchema().WithoutAdditionalProperties()
+	for _, field := range []string{"location", "field", "path", "rule", "message"} {
+		violationSchema.WithProperty(field, openapi3.NewStringSchema())
+		violationSchema.Required = append(violationSchema.Required, field)
+	}
+	violationsSchema := openapi3.NewArraySchema()
+	violationsSchema.Items = openapi3.NewSchemaRef("#/components/schemas/Violation", violationSchema)
+	dataSchema := openapi3.NewObjectSchema().WithNullable().WithAnyAdditionalProperties()
+	dataSchema.WithProperty("violations", violationsSchema)
+	dataSchema.Required = []string{"violations"}
+	doc := &openapi3.T{
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"ErrorResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Properties: openapi3.Schemas{
+						"data": openapi3.NewSchemaRef("", dataSchema),
+					},
+				}),
+				"Violation": openapi3.NewSchemaRef("", violationSchema),
+			},
+		},
+	}
+
+	got := errorResponseViolationsViolation(doc)
+	if !strings.Contains(got, "must remain optional") {
+		t.Fatalf("errorResponseViolationsViolation() = %q", got)
 	}
 }
 
@@ -1115,6 +1170,89 @@ func errorResponseEnvelopeViolation(doc *openapi3.T) string {
 	}
 	if !schemaUsesTopLevelComponent(doc, errorResponseRef, "ApiResponse", map[*openapi3.SchemaRef]bool{}) {
 		return "components.schemas.ErrorResponse must use ApiResponse as the top-level envelope"
+	}
+	return ""
+}
+
+// assertErrorResponseViolations 固化字段校验错误的 data.violations wire contract。
+func assertErrorResponseViolations(t *testing.T, doc *openapi3.T) {
+	t.Helper()
+
+	if violation := errorResponseViolationsViolation(doc); violation != "" {
+		t.Errorf("%s", violation)
+	}
+}
+
+// errorResponseViolationsViolation 返回 ErrorResponse.data.violations 的第一条结构违规。
+//
+// violations 对全局 ErrorResponse.data 保持可选，因为非字段类错误仍允许 data=null 或
+// 携带其它 AppError details；一旦出现 violations，每一项必须固定为五字段 Violation。
+func errorResponseViolationsViolation(doc *openapi3.T) string {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return "components.schemas must declare ErrorResponse and Violation"
+	}
+	errorResponseRef := doc.Components.Schemas["ErrorResponse"]
+	if errorResponseRef == nil || errorResponseRef.Value == nil {
+		return "components.schemas.ErrorResponse must exist"
+	}
+
+	candidates := append(openapi3.SchemaRefs{errorResponseRef}, errorResponseRef.Value.AllOf...)
+	var dataSchema *openapi3.Schema
+	var violationsRef *openapi3.SchemaRef
+	for _, candidate := range candidates {
+		if candidate == nil || candidate.Value == nil {
+			continue
+		}
+		dataRef := candidate.Value.Properties["data"]
+		if dataRef == nil || dataRef.Value == nil {
+			continue
+		}
+		candidateViolations := dataRef.Value.Properties["violations"]
+		if candidateViolations == nil {
+			continue
+		}
+		dataSchema = dataRef.Value
+		violationsRef = candidateViolations
+		break
+	}
+	if dataSchema == nil || violationsRef == nil || violationsRef.Value == nil {
+		return "components.schemas.ErrorResponse.data must declare optional violations"
+	}
+	if contains(dataSchema.Required, "violations") {
+		return "components.schemas.ErrorResponse.data.violations must remain optional"
+	}
+	if !dataSchema.Nullable {
+		return "components.schemas.ErrorResponse.data must remain nullable"
+	}
+	if dataSchema.AdditionalProperties.Has == nil || !*dataSchema.AdditionalProperties.Has {
+		return "components.schemas.ErrorResponse.data must preserve additionalProperties for non-validation details"
+	}
+	if !violationsRef.Value.Type.Is("array") || violationsRef.Value.Items == nil {
+		return "components.schemas.ErrorResponse.data.violations must be an array of Violation"
+	}
+	if !schemaUsesTopLevelComponent(doc, violationsRef.Value.Items, "Violation", map[*openapi3.SchemaRef]bool{}) {
+		return "components.schemas.ErrorResponse.data.violations items must use Violation"
+	}
+
+	violationRef := doc.Components.Schemas["Violation"]
+	if violationRef == nil || violationRef.Value == nil || !violationRef.Value.Type.Is("object") {
+		return "components.schemas.Violation must be an object"
+	}
+	if violationRef.Value.AdditionalProperties.Has == nil || *violationRef.Value.AdditionalProperties.Has {
+		return "components.schemas.Violation must forbid additionalProperties"
+	}
+	wantFields := []string{"location", "field", "path", "rule", "message"}
+	if len(violationRef.Value.Required) != len(wantFields) {
+		return "components.schemas.Violation must require location, field, path, rule, message"
+	}
+	for _, field := range wantFields {
+		if !contains(violationRef.Value.Required, field) {
+			return fmt.Sprintf("components.schemas.Violation must require %s", field)
+		}
+		fieldRef := violationRef.Value.Properties[field]
+		if fieldRef == nil || fieldRef.Value == nil || !fieldRef.Value.Type.Is("string") {
+			return fmt.Sprintf("components.schemas.Violation.%s must be a string", field)
+		}
 	}
 	return ""
 }

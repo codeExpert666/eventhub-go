@@ -490,9 +490,63 @@ components:
             data:
               type: object
               nullable: true
+              properties:
+                violations:
+                  type: array
+                  description: HTTP 请求字段或请求契约校验失败项；非字段类错误可以不提供。
+                  items:
+                    $ref: '#/components/schemas/Violation'
               additionalProperties: true
               example:
-                username: username 不能为空
+                violations:
+                  - location: body
+                    field: username
+                    path: username
+                    rule: notBlank
+                    message: username 不能为空
+    Violation:
+      type: object
+      description: 一条可定位到 HTTP 输入位置、字段路径和规则的请求契约错误。
+      additionalProperties: false
+      required:
+        - location
+        - field
+        - path
+        - rule
+        - message
+      properties:
+        location:
+          type: string
+          description: 校验失败字段所在的 HTTP 输入位置。
+          enum:
+            - body
+            - query
+            - path
+            - header
+            - cookie
+          x-enum-varnames:
+            - ViolationLocationBody
+            - ViolationLocationQuery
+            - ViolationLocationPath
+            - ViolationLocationHeader
+            - ViolationLocationCookie
+          example: body
+        field:
+          type: string
+          description: 便于调用方直接关联表单控件的字段名。
+          example: username
+        path:
+          type: string
+          description: 字段在对应 HTTP 输入位置中的完整路径。
+          example: username
+        rule:
+          type: string
+          description: 触发本次失败的稳定校验规则标识。
+          example: notBlank
+        message:
+          type: string
+          description: 面向调用方的稳定、用户可读错误消息。
+          example: username 不能为空
     ApiResponseVoid:
       allOf:
         - $ref: '#/components/schemas/ApiResponse'

@@ -84,10 +84,7 @@ func TestEchoRejectsBlankMessage(t *testing.T) {
 	if responseBody["message"] != "请求体参数校验失败" {
 		t.Fatalf("unexpected message: %v", responseBody["message"])
 	}
-	data := responseBody["data"].(map[string]any)
-	if data["message"] != "message 不能为空" {
-		t.Fatalf("unexpected field error: %v", data["message"])
-	}
+	assertSingleViolation(t, responseBody, "body", "message", "message", "notBlank", "message 不能为空")
 }
 
 func TestEchoRejectsMalformedJSON(t *testing.T) {
@@ -106,10 +103,7 @@ func TestEchoRejectsMalformedJSON(t *testing.T) {
 	if responseBody["message"] != "请求体格式不合法" {
 		t.Fatalf("unexpected message: %v", responseBody["message"])
 	}
-	data := responseBody["data"].(map[string]any)
-	if data["body"] != "请求体缺失或 JSON 格式错误" {
-		t.Fatalf("unexpected body error: %v", data["body"])
-	}
+	assertSingleViolation(t, responseBody, "body", "body", "body", "malformed", "请求体缺失或 JSON 格式错误")
 }
 
 func TestRequestIDReusesSafeHeader(t *testing.T) {
@@ -320,16 +314,47 @@ func TestOpenAPIDeclaredRoutesUseGeneratedStrictRouter(t *testing.T) {
 	if body["message"] != "请求体格式不合法" {
 		t.Fatalf("unexpected message: %v", body["message"])
 	}
+	assertSingleViolation(t, body, "body", "body", "body", "malformed", "请求体缺失或 JSON 格式错误")
+}
+
+func TestGeneratedRouterMapsMissingRequestBodyViolation(t *testing.T) {
+	recorder := performRequest(
+		testRouter(),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		nil,
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	body := assertValidationError(t, recorder, "请求体格式不合法")
+	assertSingleViolation(t, body, "body", "body", "body", "required", "请求体缺失或 JSON 格式错误")
+}
+
+func TestGeneratedRouterMapsInvalidQueryParameterViolation(t *testing.T) {
+	recorder := performRequest(testRouter(), nethttp.MethodGet, "/api/v1/admin/users?page=not-a-number", nil, nil)
+
+	body := assertValidationError(t, recorder, "请求参数校验失败")
+	assertSingleViolation(t, body, "query", "page", "page", "type", "page 必须是整数")
+}
+
+func TestGeneratedRouterMapsInvalidPathParameterViolation(t *testing.T) {
+	recorder := performRequest(
+		testRouter(),
+		nethttp.MethodPatch,
+		"/api/v1/admin/users/not-a-number/status",
+		[]byte(`{"status":"ENABLED"}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	body := assertValidationError(t, recorder, "请求参数校验失败")
+	assertSingleViolation(t, body, "path", "userId", "userId", "type", "userId 必须是正整数")
 }
 
 func TestOpenAPIRequestContractGateRejectsInvalidQueryBeforeSecurity(t *testing.T) {
 	recorder := performRequest(testRouterWithRequestContract(t), nethttp.MethodGet, "/api/v1/admin/users?page=0", nil, nil)
 
-	assertValidationError(t, recorder, "请求参数校验失败")
-	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
-	if _, ok := data["page"]; !ok {
-		t.Fatalf("expected page field error, got %#v", data)
-	}
+	body := assertValidationError(t, recorder, "请求参数校验失败")
+	assertSingleViolation(t, body, "query", "page", "page", "minimum", "page 不符合查询参数契约")
 }
 
 func TestOpenAPIRequestContractGateRejectsInvalidPathBeforeSecurity(t *testing.T) {
@@ -341,11 +366,8 @@ func TestOpenAPIRequestContractGateRejectsInvalidPathBeforeSecurity(t *testing.T
 		map[string]string{"Content-Type": "application/json"},
 	)
 
-	assertValidationError(t, recorder, "请求参数校验失败")
-	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
-	if _, ok := data["userId"]; !ok {
-		t.Fatalf("expected userId field error, got %#v", data)
-	}
+	body := assertValidationError(t, recorder, "请求参数校验失败")
+	assertSingleViolation(t, body, "path", "userId", "userId", "type", "userId 不符合路径参数契约")
 }
 
 func TestOpenAPIRequestContractGateRejectsUnsupportedContentType(t *testing.T) {
@@ -357,11 +379,8 @@ func TestOpenAPIRequestContractGateRejectsUnsupportedContentType(t *testing.T) {
 		map[string]string{"Content-Type": "text/plain"},
 	)
 
-	assertValidationError(t, recorder, "请求内容类型不支持")
-	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
-	if data["Content-Type"] != "text/plain" {
-		t.Fatalf("unexpected content-type field error: %#v", data)
-	}
+	body := assertValidationError(t, recorder, "请求内容类型不支持")
+	assertSingleViolation(t, body, "header", "Content-Type", "Content-Type", "contentType", "不支持的 Content-Type: text/plain")
 }
 
 func TestOpenAPIRequestContractGateRejectsMalformedJSON(t *testing.T) {
@@ -373,7 +392,8 @@ func TestOpenAPIRequestContractGateRejectsMalformedJSON(t *testing.T) {
 		map[string]string{"Content-Type": "application/json"},
 	)
 
-	assertValidationError(t, recorder, "请求体格式不合法")
+	body := assertValidationError(t, recorder, "请求体格式不合法")
+	assertSingleViolation(t, body, "body", "body", "body", "malformed", "请求体缺失或 JSON 格式错误")
 }
 
 func TestOpenAPIRequestContractGateRejectsRequiredRequestBody(t *testing.T) {
@@ -385,7 +405,21 @@ func TestOpenAPIRequestContractGateRejectsRequiredRequestBody(t *testing.T) {
 		map[string]string{"Content-Type": "application/json"},
 	)
 
-	assertValidationError(t, recorder, "请求体格式不合法")
+	body := assertValidationError(t, recorder, "请求体格式不合法")
+	assertSingleViolation(t, body, "body", "body", "body", "required", "请求体缺失或 JSON 格式错误")
+}
+
+func TestOpenAPIRequestContractGateRejectsRequiredBodyField(t *testing.T) {
+	recorder := performRequest(
+		testRouterWithRequestContract(t),
+		nethttp.MethodPost,
+		"/api/v1/system/echo",
+		[]byte(`{}`),
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	body := assertValidationError(t, recorder, "请求体参数校验失败")
+	assertSingleViolation(t, body, "body", "message", "message", "required", "")
 }
 
 func TestOpenAPIRequestContractGateRejectsBodySchemaViolation(t *testing.T) {
@@ -397,7 +431,8 @@ func TestOpenAPIRequestContractGateRejectsBodySchemaViolation(t *testing.T) {
 		map[string]string{"Content-Type": "application/json"},
 	)
 
-	assertValidationError(t, recorder, "请求体参数校验失败")
+	body := assertValidationError(t, recorder, "请求体参数校验失败")
+	assertSingleViolation(t, body, "body", "message", "message", "type", "")
 }
 
 func TestOpenAPIRequestContractGateRejectsEchoSchemaLengthViolation(t *testing.T) {
@@ -409,11 +444,8 @@ func TestOpenAPIRequestContractGateRejectsEchoSchemaLengthViolation(t *testing.T
 		map[string]string{"Content-Type": "application/json"},
 	)
 
-	assertValidationError(t, recorder, "请求体参数校验失败")
-	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
-	if _, ok := data["message"]; !ok {
-		t.Fatalf("expected message field error, got %#v", data)
-	}
+	body := assertValidationError(t, recorder, "请求体参数校验失败")
+	assertSingleViolation(t, body, "body", "message", "message", "maxLength", "")
 }
 
 func TestOpenAPIRequestContractGateRejectsEchoTagSchemaLengthViolation(t *testing.T) {
@@ -425,11 +457,8 @@ func TestOpenAPIRequestContractGateRejectsEchoTagSchemaLengthViolation(t *testin
 		map[string]string{"Content-Type": "application/json"},
 	)
 
-	assertValidationError(t, recorder, "请求体参数校验失败")
-	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
-	if _, ok := data["tag"]; !ok {
-		t.Fatalf("expected tag field error, got %#v", data)
-	}
+	body := assertValidationError(t, recorder, "请求体参数校验失败")
+	assertSingleViolation(t, body, "body", "tag", "tag", "maxLength", "")
 }
 
 func TestOpenAPIRequestContractGateRejectsInvalidStatusQueryBeforeHandler(t *testing.T) {
@@ -441,11 +470,8 @@ func TestOpenAPIRequestContractGateRejectsInvalidStatusQueryBeforeHandler(t *tes
 		nil,
 	)
 
-	assertValidationError(t, recorder, "请求参数校验失败")
-	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
-	if _, ok := data["status"]; !ok {
-		t.Fatalf("expected status field error, got %#v", data)
-	}
+	body := assertValidationError(t, recorder, "请求参数校验失败")
+	assertSingleViolation(t, body, "query", "status", "status", "enum", "status 不符合查询参数契约")
 }
 
 func TestOpenAPIRequestContractGateRejectsInvalidUpdateStatusBodyBeforeHandler(t *testing.T) {
@@ -457,11 +483,8 @@ func TestOpenAPIRequestContractGateRejectsInvalidUpdateStatusBodyBeforeHandler(t
 		map[string]string{"Content-Type": "application/json"},
 	)
 
-	assertValidationError(t, recorder, "请求体参数校验失败")
-	data := decodeAPIResponse(t, recorder)["data"].(map[string]any)
-	if _, ok := data["status"]; !ok {
-		t.Fatalf("expected status field error, got %#v", data)
-	}
+	body := assertValidationError(t, recorder, "请求体参数校验失败")
+	assertSingleViolation(t, body, "body", "status", "status", "enum", "")
 }
 
 func TestOpenAPIRequestContractGateReplaysBodyForStrictHandler(t *testing.T) {
@@ -685,7 +708,7 @@ func decodeAPIResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[st
 	return body
 }
 
-func assertValidationError(t *testing.T, recorder *httptest.ResponseRecorder, message string) {
+func assertValidationError(t *testing.T, recorder *httptest.ResponseRecorder, message string) map[string]any {
 	t.Helper()
 	if recorder.Code != nethttp.StatusBadRequest {
 		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
@@ -696,6 +719,43 @@ func assertValidationError(t *testing.T, recorder *httptest.ResponseRecorder, me
 	}
 	if body["message"] != message {
 		t.Fatalf("unexpected message: got %v want %s", body["message"], message)
+	}
+	return body
+}
+
+func assertSingleViolation(t *testing.T, body map[string]any, location, field, path, rule, message string) {
+	t.Helper()
+	data, ok := body["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object, got %#v", body["data"])
+	}
+	if _, exists := data[field]; exists {
+		t.Fatalf("legacy flat field details must not be present: %#v", data)
+	}
+	violations, ok := data["violations"].([]any)
+	if !ok || len(violations) != 1 {
+		t.Fatalf("unexpected violations: %#v", data["violations"])
+	}
+	violation, ok := violations[0].(map[string]any)
+	if !ok || len(violation) != 5 {
+		t.Fatalf("expected five-field violation, got %#v", violations[0])
+	}
+	want := map[string]string{
+		"location": location,
+		"field":    field,
+		"path":     path,
+		"rule":     rule,
+	}
+	if message != "" {
+		want["message"] = message
+	}
+	for name, wantValue := range want {
+		if got, ok := violation[name].(string); !ok || got != wantValue {
+			t.Fatalf("violation.%s = %#v, want %q: %#v", name, violation[name], wantValue, violation)
+		}
+	}
+	if got, ok := violation["message"].(string); !ok || got == "" {
+		t.Fatalf("violation.message must be non-empty: %#v", violation)
 	}
 }
 

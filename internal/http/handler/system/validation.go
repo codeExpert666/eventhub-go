@@ -12,17 +12,23 @@ import (
 // parseEchoCommand 校验 system echo 请求并映射为 service command。
 func parseEchoCommand(request *openapigen.EchoRequest) (systemsvc.EchoCommand, *apperror.AppError) {
 	if request == nil {
-		return systemsvc.EchoCommand{}, requesterror.MalformedBody()
+		return systemsvc.EchoCommand{}, requesterror.MissingBody()
 	}
 
-	fields := requesterror.FieldErrors{}
+	violations := requesterror.Violations{}
 
 	if strings.TrimSpace(request.Message) == "" {
-		fields["message"] = "message 不能为空"
+		violations = append(violations, requesterror.Violation{
+			Location: requesterror.LocationBody,
+			Field:    "message",
+			Path:     "message",
+			Rule:     "notBlank",
+			Message:  "message 不能为空",
+		})
 	}
 
-	if len(fields) > 0 {
-		return systemsvc.EchoCommand{}, requesterror.InvalidBody(fields)
+	if len(violations) > 0 {
+		return systemsvc.EchoCommand{}, requesterror.InvalidBody(violations)
 	}
 	return systemsvc.EchoCommand{
 		Message: request.Message,

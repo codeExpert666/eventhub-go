@@ -4,6 +4,8 @@
 package gen
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -24,6 +26,15 @@ const (
 const (
 	DISABLED UserStatus = "DISABLED"
 	ENABLED  UserStatus = "ENABLED"
+)
+
+// Defines values for ViolationLocation.
+const (
+	ViolationLocationBody   ViolationLocation = "body"
+	ViolationLocationCookie ViolationLocation = "cookie"
+	ViolationLocationHeader ViolationLocation = "header"
+	ViolationLocationPath   ViolationLocation = "path"
+	ViolationLocationQuery  ViolationLocation = "query"
 )
 
 // ApiResponse 统一响应体。
@@ -200,15 +211,22 @@ type EchoResponse struct {
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
-	Code    string                  `json:"code"`
-	Data    *map[string]interface{} `json:"data"`
-	Message string                  `json:"message"`
+	Code    string              `json:"code"`
+	Data    *ErrorResponse_Data `json:"data"`
+	Message string              `json:"message"`
 
 	// RequestId 当前请求的唯一追踪标识。
 	RequestId string `json:"requestId"`
 
 	// Timestamp 当前响应生成时间。
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// ErrorResponse_Data defines model for ErrorResponse.Data.
+type ErrorResponse_Data struct {
+	// Violations HTTP 请求字段或请求契约校验失败项；非字段类错误可以不提供。
+	Violations           *[]Violation           `json:"violations,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
 // HealthResponse Actuator 健康检查响应。
@@ -391,6 +409,27 @@ type UserInfo struct {
 // UserStatus 用户状态。
 type UserStatus string
 
+// Violation 一条可定位到 HTTP 输入位置、字段路径和规则的请求契约错误。
+type Violation struct {
+	// Field 便于调用方直接关联表单控件的字段名。
+	Field string `json:"field"`
+
+	// Location 校验失败字段所在的 HTTP 输入位置。
+	Location ViolationLocation `json:"location"`
+
+	// Message 面向调用方的稳定、用户可读错误消息。
+	Message string `json:"message"`
+
+	// Path 字段在对应 HTTP 输入位置中的完整路径。
+	Path string `json:"path"`
+
+	// Rule 触发本次失败的稳定校验规则标识。
+	Rule string `json:"rule"`
+}
+
+// ViolationLocation 校验失败字段所在的 HTTP 输入位置。
+type ViolationLocation string
+
 // AuthConflict defines model for AuthConflict.
 type AuthConflict = ErrorResponse
 
@@ -453,3 +492,71 @@ type RegisterJSONRequestBody = RegisterRequest
 
 // EchoJSONRequestBody defines body for Echo for application/json ContentType.
 type EchoJSONRequestBody = EchoRequest
+
+// Getter for additional properties for ErrorResponse_Data. Returns the specified
+// element and whether it was found
+func (a ErrorResponse_Data) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for ErrorResponse_Data
+func (a *ErrorResponse_Data) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for ErrorResponse_Data to handle AdditionalProperties
+func (a *ErrorResponse_Data) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["violations"]; found {
+		err = json.Unmarshal(raw, &a.Violations)
+		if err != nil {
+			return fmt.Errorf("error reading 'violations': %w", err)
+		}
+		delete(object, "violations")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for ErrorResponse_Data to handle AdditionalProperties
+func (a ErrorResponse_Data) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Violations != nil {
+		object["violations"], err = json.Marshal(a.Violations)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'violations': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}

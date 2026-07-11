@@ -177,10 +177,7 @@ func TestAuthRefreshEndpointRejectsBlankRefreshToken(t *testing.T) {
 	if body["code"] != "COMMON-400" || body["message"] != "请求体参数校验失败" {
 		t.Fatalf("unexpected body: %#v", body)
 	}
-	data := body["data"].(map[string]any)
-	if data["refreshToken"] != "refreshToken 不能为空" {
-		t.Fatalf("unexpected field error: %#v", data)
-	}
+	assertSingleViolation(t, body, "body", "refreshToken", "refreshToken", "notBlank", "refreshToken 不能为空")
 }
 
 func TestAuthLogoutEndpointRequiresAuthentication(t *testing.T) {

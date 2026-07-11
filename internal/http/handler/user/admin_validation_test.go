@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	openapigen "eventhub-go/api/openapi/gen"
+	"eventhub-go/internal/http/requesterror"
 )
 
 func TestParseAdminUserListQueryNormalizesTextFilters(t *testing.T) {
@@ -53,7 +54,18 @@ func TestParseUpdateUserStatusCommandValidatesPathBeforeBody(t *testing.T) {
 	if appErr == nil {
 		t.Fatal("expected path validation error")
 	}
-	if appErr.Details()["userId"] != "userId 必须是正整数" {
-		t.Fatalf("details = %#v, want userId validation error", appErr.Details())
+	violations, ok := appErr.Details()["violations"].(requesterror.Violations)
+	if !ok || len(violations) != 1 {
+		t.Fatalf("details = %#v, want one violation", appErr.Details())
+	}
+	want := requesterror.Violation{
+		Location: requesterror.LocationPath,
+		Field:    "userId",
+		Path:     "userId",
+		Rule:     "minimum",
+		Message:  "userId 必须是正整数",
+	}
+	if violations[0] != want {
+		t.Fatalf("violation = %#v, want %#v", violations[0], want)
 	}
 }

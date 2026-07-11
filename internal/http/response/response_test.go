@@ -10,12 +10,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
 	"testing"
 
 	"eventhub-go/internal/apperror"
+	"eventhub-go/internal/http/requesterror"
 	"eventhub-go/internal/http/response"
 	"eventhub-go/internal/platform/idgen"
 )
@@ -66,6 +68,49 @@ func TestWriteError(t *testing.T) {
 	data := body["data"].(map[string]any)
 	if data["page"] != "page 必须是整数" {
 		t.Fatalf("unexpected details: %#v", data)
+	}
+}
+
+func TestWriteErrorSerializesValidationViolations(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/test", nil)
+	request = request.WithContext(idgen.WithRequestID(request.Context(), "req-violation"))
+	recorder := httptest.NewRecorder()
+
+	response.WriteError(recorder, request, requesterror.InvalidParameters(requesterror.Violations{{
+		Location: requesterror.LocationQuery,
+		Field:    "page",
+		Path:     "page",
+		Rule:     "minimum",
+		Message:  "page 必须大于等于 1",
+	}}))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d", recorder.Code)
+	}
+	body := decodeBody(t, recorder)
+	if body["code"] != "COMMON-400" || body["message"] != "请求参数校验失败" {
+		t.Fatalf("unexpected error envelope: %#v", body)
+	}
+	if body["requestId"] != "req-violation" || body["timestamp"] == "" {
+		t.Fatalf("unexpected error metadata: %#v", body)
+	}
+	data := body["data"].(map[string]any)
+	if _, exists := data["page"]; exists {
+		t.Fatalf("legacy flat field details must not be present: %#v", data)
+	}
+	violations, ok := data["violations"].([]any)
+	if !ok || len(violations) != 1 {
+		t.Fatalf("unexpected violations: %#v", data["violations"])
+	}
+	want := map[string]any{
+		"location": "query",
+		"field":    "page",
+		"path":     "page",
+		"rule":     "minimum",
+		"message":  "page 必须大于等于 1",
+	}
+	if got := violations[0]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("violation = %#v, want %#v", got, want)
 	}
 }
 

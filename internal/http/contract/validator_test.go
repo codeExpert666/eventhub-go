@@ -34,10 +34,13 @@ paths:
 	handler.ServeHTTP(recorder, request)
 
 	body := assertContractError(t, recorder, http.StatusBadRequest, "请求头参数校验失败")
-	data := body["data"].(map[string]any)
-	if data["X-Tenant-Id"] != "X-Tenant-Id 不符合请求头契约" {
-		t.Fatalf("unexpected header violation: %#v", data)
-	}
+	assertSingleViolation(t, body, map[string]any{
+		"location": "header",
+		"field":    "X-Tenant-Id",
+		"path":     "X-Tenant-Id",
+		"rule":     "minimum",
+		"message":  "X-Tenant-Id 不符合请求头契约",
+	})
 }
 
 func TestRequestValidatorMapsCookieParameterViolation(t *testing.T) {
@@ -67,10 +70,48 @@ paths:
 	handler.ServeHTTP(recorder, request)
 
 	body := assertContractError(t, recorder, http.StatusBadRequest, "Cookie 参数校验失败")
-	data := body["data"].(map[string]any)
-	if data["session"] != "session 不符合 Cookie 契约" {
-		t.Fatalf("unexpected cookie violation: %#v", data)
-	}
+	assertSingleViolation(t, body, map[string]any{
+		"location": "cookie",
+		"field":    "session",
+		"path":     "session",
+		"rule":     "minLength",
+		"message":  "session 不符合 Cookie 契约",
+	})
+}
+
+func TestRequestValidatorMapsDisallowedEmptyParameterViolation(t *testing.T) {
+	handler := testRequestContractHandler(t, `openapi: 3.0.3
+info:
+  title: Empty Parameter Contract Test API
+  version: test
+paths:
+  /search:
+    get:
+      operationId: search
+      parameters:
+        - name: filter
+          in: query
+          required: true
+          allowEmptyValue: false
+          schema:
+            type: string
+      responses:
+        "204":
+          description: no content
+`)
+
+	request := httptest.NewRequest(http.MethodGet, "/search?filter=", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	body := assertContractError(t, recorder, http.StatusBadRequest, "请求参数校验失败")
+	assertSingleViolation(t, body, map[string]any{
+		"location": "query",
+		"field":    "filter",
+		"path":     "filter",
+		"rule":     "allowEmptyValue",
+		"message":  "filter 不符合查询参数契约",
+	})
 }
 
 func TestRequestValidatorAllowsUnknownQueryHeaderAndCookieParameters(t *testing.T) {
@@ -130,8 +171,39 @@ func assertContractError(t *testing.T, recorder *httptest.ResponseRecorder, stat
 	if body["message"] != message {
 		t.Fatalf("unexpected message: %v", body["message"])
 	}
-	if _, ok := body["data"].(map[string]any); !ok {
+	data, ok := body["data"].(map[string]any)
+	if !ok {
 		t.Fatalf("expected data object, got %#v", body["data"])
 	}
+	violations, ok := data["violations"].([]any)
+	if !ok || len(violations) == 0 {
+		t.Fatalf("expected non-empty data.violations, got %#v", data)
+	}
+	for _, item := range violations {
+		violation, ok := item.(map[string]any)
+		if !ok || len(violation) != 5 {
+			t.Fatalf("expected five-field violation, got %#v", item)
+		}
+		for _, field := range []string{"location", "field", "path", "rule", "message"} {
+			if _, ok := violation[field].(string); !ok {
+				t.Fatalf("violation.%s must be a string: %#v", field, violation)
+			}
+		}
+	}
 	return body
+}
+
+func assertSingleViolation(t *testing.T, body map[string]any, want map[string]any) {
+	t.Helper()
+	data := body["data"].(map[string]any)
+	violations := data["violations"].([]any)
+	if len(violations) != 1 {
+		t.Fatalf("violations count = %d, want 1: %#v", len(violations), violations)
+	}
+	got := violations[0].(map[string]any)
+	for field, wantValue := range want {
+		if got[field] != wantValue {
+			t.Fatalf("violation.%s = %#v, want %#v: %#v", field, got[field], wantValue, got)
+		}
+	}
 }
