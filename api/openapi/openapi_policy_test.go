@@ -55,6 +55,104 @@ func TestOpenAPIPolicy(t *testing.T) {
 	assertAuthSecurityPolicy(t, operations)
 }
 
+// TestOpenAPIValidationPolicy 固化 x-validation 的声明格式。
+//
+// 本阶段只把字段规则和消息写入 OpenAPI，不改变 contract gate 的运行时行为。
+// policy 仅扫描 operation request body 的顶层字段和 query 参数，避免把响应模型上的
+// schema 约束误当成请求校验契约。
+func TestOpenAPIValidationPolicy(t *testing.T) {
+	doc := loadOpenAPIDocument(t)
+	operations := collectOperations(doc)
+
+	for _, field := range collectRequestValidationFields(operations) {
+		field := field
+		t.Run(field.label, func(t *testing.T) {
+			for _, violation := range fieldValidationPolicyViolations(field) {
+				t.Errorf("%s", violation)
+			}
+		})
+	}
+
+	for _, item := range operations {
+		rawValidation, ok := item.operation.Extensions["x-validation"]
+		if !ok {
+			continue
+		}
+		validation, ok := rawValidation.(map[string]any)
+		if !ok {
+			t.Errorf("%s x-validation must be an object", item.label())
+			continue
+		}
+		for key := range validation {
+			switch key {
+			case "crossFields", "messages":
+			default:
+				t.Errorf("%s x-validation.%s is not allowed at operation level", item.label(), key)
+			}
+		}
+		if _, ok := validation["crossFields"]; !ok {
+			continue
+		}
+		for _, violation := range crossFieldValidationPolicyViolations(item) {
+			t.Errorf("%s", violation)
+		}
+	}
+}
+
+// TestOpenAPIJavaParityValidationMessagesAreStable 固化当前 Java DTO 的字段消息。
+//
+// 仅检查“存在 message”不足以防止文案漂移；这里对当前已迁移请求字段逐条断言准确中文消息，
+// 并覆盖 Go OpenAPI 已声明的时间格式和枚举规则。运行时 custom rule engine 留待后续阶段实现。
+func TestOpenAPIJavaParityValidationMessagesAreStable(t *testing.T) {
+	doc := loadOpenAPIDocument(t)
+	operations := collectOperations(doc)
+	fieldsByLabel := make(map[string]validationField)
+	for _, field := range collectRequestValidationFields(operations) {
+		fieldsByLabel[field.label] = field
+	}
+
+	expectedMessages := javaParityValidationMessages()
+	labels := make([]string, 0, len(expectedMessages))
+	for label := range expectedMessages {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+
+	for _, label := range labels {
+		field, ok := fieldsByLabel[label]
+		if !ok {
+			t.Errorf("Java parity validation field %s must exist", label)
+			continue
+		}
+		validation, ok := validationExtension(field.schemaRef)
+		if !ok {
+			t.Errorf("%s must declare x-validation", label)
+			continue
+		}
+		messages, ok := stringMap(validation["messages"])
+		if !ok {
+			t.Errorf("%s x-validation.messages must be a string map", label)
+			continue
+		}
+
+		rules := make([]string, 0, len(expectedMessages[label]))
+		for rule := range expectedMessages[label] {
+			rules = append(rules, rule)
+		}
+		sort.Strings(rules)
+		for _, rule := range rules {
+			want := expectedMessages[label][rule]
+			got := strings.TrimSpace(messages[rule])
+			if got != want {
+				t.Errorf("%s messages.%s: got %q want %q", label, rule, got, want)
+			}
+		}
+	}
+
+	assertJavaParityCustomRules(t, fieldsByLabel)
+	assertJavaParityCrossFieldRules(t, operations)
+}
+
 // TestOpenAPIGeneratedFilesAreSplit 固化 oapi-codegen 生成物的可读性边界。
 //
 // HTTP 层仍统一 import eventhub-go/api/openapi/gen；这里仅约束物理文件布局：
@@ -299,6 +397,505 @@ func (item operationItem) label() string {
 		operationID = "<missing>"
 	}
 	return fmt.Sprintf("%s (operationId=%s)", item.routeKey(), operationID)
+}
+
+// validationField 是 policy test 对请求字段的最小抽象。
+// required 来自父 object.required 或 parameter.required；其他规则来自 schemaRef.Value。
+type validationField struct {
+	label     string
+	required  bool
+	schemaRef *openapi3.SchemaRef
+}
+
+// crossFieldRule 表示 operation 级 x-validation.crossFields 的固定声明形态。
+type crossFieldRule struct {
+	name    string
+	rule    string
+	left    string
+	right   string
+	message string
+}
+
+// collectRequestValidationFields 只收集当前 HTTP 请求边界的 body 顶层字段和 query 参数。
+//
+// request body 的 required 信息位于父 object schema；query required 位于 Parameter。
+// 跳过 response schema 和 path/header/cookie 是阶段 1 的刻意范围约束。
+func collectRequestValidationFields(operations []operationItem) []validationField {
+	var fields []validationField
+
+	for _, item := range operations {
+		var requestBody *openapi3.RequestBody
+		if item.operation.RequestBody != nil {
+			requestBody = item.operation.RequestBody.Value
+		}
+		if requestBody != nil {
+			mediaType := requestBody.Content["application/json"]
+			if mediaType != nil && mediaType.Schema != nil {
+				bodySchema := mediaType.Schema.Value
+				if bodySchema != nil {
+					propertyNames := make([]string, 0, len(bodySchema.Properties))
+					for name := range bodySchema.Properties {
+						propertyNames = append(propertyNames, name)
+					}
+					sort.Strings(propertyNames)
+					for _, name := range propertyNames {
+						fields = append(fields, validationField{
+							label:     fmt.Sprintf("%s body.%s", item.routeKey(), name),
+							required:  contains(bodySchema.Required, name),
+							schemaRef: bodySchema.Properties[name],
+						})
+					}
+				}
+			}
+		}
+
+		for _, parameterRef := range item.operation.Parameters {
+			var parameter *openapi3.Parameter
+			if parameterRef != nil {
+				parameter = parameterRef.Value
+			}
+			if parameter == nil || parameter.In != openapi3.ParameterInQuery {
+				continue
+			}
+			fields = append(fields, validationField{
+				label:     fmt.Sprintf("%s query.%s", item.routeKey(), parameter.Name),
+				required:  parameter.Required,
+				schemaRef: parameter.Schema,
+			})
+		}
+	}
+
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].label < fields[j].label
+	})
+	return fields
+}
+
+// fieldValidationPolicyViolations 返回字段级 x-validation 的全部格式违规。
+func fieldValidationPolicyViolations(field validationField) []string {
+	var schema *openapi3.Schema
+	if field.schemaRef != nil {
+		schema = field.schemaRef.Value
+	}
+	if schema == nil {
+		return []string{fmt.Sprintf("%s schema cannot be resolved", field.label)}
+	}
+
+	ruleNames := schemaValidationRuleNames(schema, field.required)
+	rawValidation, hasValidation := rawValidationExtension(field.schemaRef)
+	if !hasValidation {
+		if len(ruleNames) == 0 {
+			return nil
+		}
+		return []string{fmt.Sprintf("%s has field rules %v and must declare x-validation messages", field.label, ruleNames)}
+	}
+
+	validation, ok := rawValidation.(map[string]any)
+	if !ok {
+		return []string{fmt.Sprintf("%s x-validation must be an object", field.label)}
+	}
+
+	var violations []string
+	for key := range validation {
+		switch key {
+		case "messages", "notBlank", "rules":
+		default:
+			violations = append(violations, fmt.Sprintf("%s x-validation.%s is not allowed at field level", field.label, key))
+		}
+	}
+	if rawNotBlank, exists := validation["notBlank"]; exists {
+		notBlank, ok := rawNotBlank.(bool)
+		if !ok || !notBlank {
+			violations = append(violations, fmt.Sprintf("%s x-validation.notBlank must be true when declared", field.label))
+		} else {
+			ruleNames = append(ruleNames, "notBlank")
+		}
+	}
+
+	messages, messagesOK := stringMap(validation["messages"])
+	if len(ruleNames) > 0 && !messagesOK {
+		violations = append(violations, fmt.Sprintf("%s x-validation.messages must be a string map", field.label))
+	} else {
+		for _, ruleName := range ruleNames {
+			if strings.TrimSpace(messages[ruleName]) == "" {
+				violations = append(violations, fmt.Sprintf("%s field rule %s must declare a non-empty messages.%s", field.label, ruleName, ruleName))
+			}
+		}
+	}
+
+	if rawRules, exists := validation["rules"]; exists {
+		rules, ok := rawRules.([]any)
+		if !ok || len(rules) == 0 {
+			violations = append(violations, fmt.Sprintf("%s x-validation.rules must be a non-empty array", field.label))
+		} else {
+			for index, rawRule := range rules {
+				rule, ok := rawRule.(map[string]any)
+				if !ok {
+					violations = append(violations, fmt.Sprintf("%s x-validation.rules[%d] must be an object", field.label, index))
+					continue
+				}
+				name, nameOK := nonEmptyString(rule["name"])
+				_, messageOK := nonEmptyString(rule["message"])
+				if !nameOK {
+					violations = append(violations, fmt.Sprintf("%s x-validation.rules[%d].name must be a non-empty string", field.label, index))
+				}
+				if !messageOK {
+					violations = append(violations, fmt.Sprintf("%s x-validation.rules[%d].message must be a non-empty string", field.label, index))
+				}
+				if nameOK && name != "containsLetterAndDigit" {
+					violations = append(violations, fmt.Sprintf("%s x-validation.rules[%d] uses unsupported custom rule %q", field.label, index, name))
+				}
+			}
+		}
+	}
+
+	return violations
+}
+
+// crossFieldValidationPolicyViolations 校验 operation 级 crossFields 格式和规则白名单。
+func crossFieldValidationPolicyViolations(item operationItem) []string {
+	rawValidation := item.operation.Extensions["x-validation"]
+	validation, ok := rawValidation.(map[string]any)
+	if !ok {
+		return []string{fmt.Sprintf("%s x-validation must be an object", item.label())}
+	}
+
+	var violations []string
+
+	rawCrossFields, ok := validation["crossFields"]
+	if !ok {
+		return append(violations, fmt.Sprintf("%s x-validation.crossFields must be declared", item.label()))
+	}
+	crossFields, ok := rawCrossFields.([]any)
+	if !ok || len(crossFields) == 0 {
+		return append(violations, fmt.Sprintf("%s x-validation.crossFields must be a non-empty array", item.label()))
+	}
+
+	requiredKeys := []string{"name", "rule", "left", "right", "message"}
+	for index, rawCrossField := range crossFields {
+		crossField, ok := rawCrossField.(map[string]any)
+		if !ok {
+			violations = append(violations, fmt.Sprintf("%s x-validation.crossFields[%d] must be an object", item.label(), index))
+			continue
+		}
+		for _, key := range requiredKeys {
+			if _, ok := nonEmptyString(crossField[key]); !ok {
+				violations = append(violations, fmt.Sprintf("%s x-validation.crossFields[%d].%s must be a non-empty string", item.label(), index, key))
+			}
+		}
+		if rule, ok := nonEmptyString(crossField["rule"]); ok && rule != "notAfter" {
+			violations = append(violations, fmt.Sprintf("%s x-validation.crossFields[%d] uses unsupported custom rule %q", item.label(), index, rule))
+		}
+	}
+
+	return violations
+}
+
+// schemaValidationRuleNames 返回需要稳定 message 的 OpenAPI 原生字段规则。
+func schemaValidationRuleNames(schema *openapi3.Schema, required bool) []string {
+	var rules []string
+	if required {
+		rules = append(rules, "required")
+	}
+	if schema.MinLength > 0 {
+		rules = append(rules, "minLength")
+	}
+	if schema.MaxLength != nil {
+		rules = append(rules, "maxLength")
+	}
+	if strings.TrimSpace(schema.Pattern) != "" {
+		rules = append(rules, "pattern")
+	}
+	if strings.TrimSpace(schema.Format) != "" {
+		rules = append(rules, "format")
+	}
+	if len(schema.Enum) > 0 {
+		rules = append(rules, "enum")
+	}
+	if schema.Min != nil {
+		rules = append(rules, "minimum")
+	}
+	if schema.Max != nil {
+		rules = append(rules, "maximum")
+	}
+	return rules
+}
+
+// rawValidationExtension 同时兼容内联 Schema.Extensions 和 `$ref` 旁的 SchemaRef.Extensions。
+func rawValidationExtension(schemaRef *openapi3.SchemaRef) (any, bool) {
+	if schemaRef == nil {
+		return nil, false
+	}
+	if raw, ok := schemaRef.Extensions["x-validation"]; ok {
+		return raw, true
+	}
+	if schemaRef.Value == nil {
+		return nil, false
+	}
+	raw, ok := schemaRef.Value.Extensions["x-validation"]
+	return raw, ok
+}
+
+func validationExtension(schemaRef *openapi3.SchemaRef) (map[string]any, bool) {
+	raw, ok := rawValidationExtension(schemaRef)
+	if !ok {
+		return nil, false
+	}
+	validation, ok := raw.(map[string]any)
+	return validation, ok
+}
+
+func stringMap(raw any) (map[string]string, bool) {
+	values, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	result := make(map[string]string, len(values))
+	for key, rawValue := range values {
+		value, ok := rawValue.(string)
+		if !ok {
+			return nil, false
+		}
+		result[key] = value
+	}
+	return result, true
+}
+
+func nonEmptyString(raw any) (string, bool) {
+	value, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	value = strings.TrimSpace(value)
+	return value, value != ""
+}
+
+// javaParityValidationMessages 返回当前 Java DTO 与既有 Go schema 的稳定消息基线。
+// 时间字段没有 Java Bean Validation message，因此沿用当前 Go handler 的字段级格式提示；
+// UpdateUserStatus.status 的 enum 消息复用 Java 管理员查询状态的允许值提示。
+func javaParityValidationMessages() map[string]map[string]string {
+	return map[string]map[string]string{
+		"POST /api/v1/auth/register body.username": {
+			"required":  "username 不能为空",
+			"notBlank":  "username 不能为空",
+			"minLength": "username 长度必须在 3 到 32 个字符之间",
+			"maxLength": "username 长度必须在 3 到 32 个字符之间",
+			"pattern":   "username 只能包含字母、数字和下划线",
+		},
+		"POST /api/v1/auth/register body.email": {
+			"required":  "email 不能为空",
+			"notBlank":  "email 不能为空",
+			"format":    "email 格式不合法",
+			"maxLength": "email 长度不能超过 128 个字符",
+		},
+		"POST /api/v1/auth/register body.password": {
+			"required":  "password 不能为空",
+			"notBlank":  "password 不能为空",
+			"minLength": "password 长度必须在 8 到 72 个字符之间",
+			"maxLength": "password 长度必须在 8 到 72 个字符之间",
+		},
+		"POST /api/v1/auth/login body.usernameOrEmail": {
+			"required":  "用户名或邮箱不能为空",
+			"notBlank":  "用户名或邮箱不能为空",
+			"maxLength": "用户名或邮箱长度不能超过 128 个字符",
+		},
+		"POST /api/v1/auth/login body.password": {
+			"required":  "密码不能为空",
+			"notBlank":  "密码不能为空",
+			"maxLength": "密码长度不能超过 72 个字符",
+		},
+		"POST /api/v1/auth/refresh body.refreshToken": {
+			"required":  "refreshToken 不能为空",
+			"notBlank":  "refreshToken 不能为空",
+			"maxLength": "refreshToken 长度不能超过 128 个字符",
+		},
+		"PATCH /api/v1/admin/users/{userId}/status body.status": {
+			"required": "status 不能为空",
+			"enum":     "用户状态只能是 ENABLED 或 DISABLED",
+		},
+		"POST /api/v1/system/echo body.message": {
+			"required":  "message 不能为空",
+			"notBlank":  "message 不能为空",
+			"minLength": "message 不能为空",
+			"maxLength": "message 长度不能超过 64",
+		},
+		"POST /api/v1/system/echo body.tag": {
+			"maxLength": "tag 长度不能超过 32",
+		},
+		"GET /api/v1/admin/users query.page": {
+			"minimum": "页码不能小于 1",
+		},
+		"GET /api/v1/admin/users query.size": {
+			"minimum": "每页条数不能小于 1",
+			"maximum": "每页条数不能超过 100",
+		},
+		"GET /api/v1/admin/users query.username": {
+			"maxLength": "用户名筛选长度不能超过 32",
+		},
+		"GET /api/v1/admin/users query.email": {
+			"maxLength": "邮箱筛选长度不能超过 128",
+		},
+		"GET /api/v1/admin/users query.status": {
+			"enum": "用户状态只能是 ENABLED 或 DISABLED",
+		},
+		"GET /api/v1/admin/users query.createdAtFrom": {
+			"pattern": "createdAtFrom 格式不合法",
+		},
+		"GET /api/v1/admin/users query.createdAtTo": {
+			"pattern": "createdAtTo 格式不合法",
+		},
+		"GET /api/v1/admin/users query.updatedAtFrom": {
+			"pattern": "updatedAtFrom 格式不合法",
+		},
+		"GET /api/v1/admin/users query.updatedAtTo": {
+			"pattern": "updatedAtTo 格式不合法",
+		},
+	}
+}
+
+func assertJavaParityCustomRules(t *testing.T, fieldsByLabel map[string]validationField) {
+	t.Helper()
+
+	const label = "POST /api/v1/auth/register body.password"
+	field, ok := fieldsByLabel[label]
+	if !ok {
+		t.Errorf("Java parity validation field %s must exist", label)
+		return
+	}
+	validation, ok := validationExtension(field.schemaRef)
+	if !ok {
+		t.Errorf("%s must declare x-validation", label)
+		return
+	}
+	rules, ok := customRuleMessages(validation["rules"])
+	if !ok {
+		t.Errorf("%s x-validation.rules must contain named rules with messages", label)
+		return
+	}
+	if len(rules) != 1 {
+		t.Errorf("%s x-validation.rules: got %d rules want 1", label, len(rules))
+	}
+	const want = "password 至少包含字母和数字"
+	got := strings.TrimSpace(rules["containsLetterAndDigit"])
+	if got != want {
+		t.Errorf("%s custom rule containsLetterAndDigit: got %q want %q", label, got, want)
+	}
+}
+
+func assertJavaParityCrossFieldRules(t *testing.T, operations []operationItem) {
+	t.Helper()
+
+	var target *operationItem
+	for index := range operations {
+		if operations[index].routeKey() == "GET /api/v1/admin/users" {
+			target = &operations[index]
+			break
+		}
+	}
+	if target == nil {
+		t.Errorf("GET /api/v1/admin/users must exist for Java parity validation")
+		return
+	}
+
+	rules, ok := crossFieldRules(*target)
+	if !ok {
+		t.Errorf("%s must declare valid x-validation.crossFields", target.label())
+		return
+	}
+	if len(rules) != 2 {
+		t.Errorf("%s x-validation.crossFields: got %d rules want 2", target.label(), len(rules))
+	}
+	rulesByName := make(map[string]crossFieldRule, len(rules))
+	for _, rule := range rules {
+		rulesByName[rule.name] = rule
+	}
+
+	expected := []crossFieldRule{
+		{
+			name:    "createdAtRange",
+			rule:    "notAfter",
+			left:    "createdAtFrom",
+			right:   "createdAtTo",
+			message: "createdAtFrom 不能晚于 createdAtTo",
+		},
+		{
+			name:    "updatedAtRange",
+			rule:    "notAfter",
+			left:    "updatedAtFrom",
+			right:   "updatedAtTo",
+			message: "updatedAtFrom 不能晚于 updatedAtTo",
+		},
+	}
+	for _, want := range expected {
+		got, ok := rulesByName[want.name]
+		if !ok {
+			t.Errorf("%s x-validation.crossFields must contain %s", target.label(), want.name)
+			continue
+		}
+		if got.rule != want.rule || got.left != want.left || got.right != want.right || got.message != want.message {
+			t.Errorf("%s crossFields.%s: got %+v want %+v", target.label(), want.name, got, want)
+		}
+	}
+}
+
+func customRuleMessages(raw any) (map[string]string, bool) {
+	rawRules, ok := raw.([]any)
+	if !ok || len(rawRules) == 0 {
+		return nil, false
+	}
+	rules := make(map[string]string, len(rawRules))
+	for _, rawRule := range rawRules {
+		rule, ok := rawRule.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		name, nameOK := nonEmptyString(rule["name"])
+		message, messageOK := nonEmptyString(rule["message"])
+		if !nameOK || !messageOK {
+			return nil, false
+		}
+		rules[name] = message
+	}
+	return rules, true
+}
+
+func crossFieldRules(item operationItem) ([]crossFieldRule, bool) {
+	rawValidation, ok := item.operation.Extensions["x-validation"]
+	if !ok {
+		return nil, false
+	}
+	validation, ok := rawValidation.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	rawRules, ok := validation["crossFields"].([]any)
+	if !ok || len(rawRules) == 0 {
+		return nil, false
+	}
+
+	rules := make([]crossFieldRule, 0, len(rawRules))
+	for _, rawRule := range rawRules {
+		rule, ok := rawRule.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		name, nameOK := nonEmptyString(rule["name"])
+		ruleName, ruleOK := nonEmptyString(rule["rule"])
+		left, leftOK := nonEmptyString(rule["left"])
+		right, rightOK := nonEmptyString(rule["right"])
+		message, messageOK := nonEmptyString(rule["message"])
+		if !nameOK || !ruleOK || !leftOK || !rightOK || !messageOK {
+			return nil, false
+		}
+		rules = append(rules, crossFieldRule{
+			name:    name,
+			rule:    ruleName,
+			left:    left,
+			right:   right,
+			message: message,
+		})
+	}
+	return rules, true
 }
 
 // loadOpenAPIDocument 从当前测试文件所在目录加载 eventhub.yaml。

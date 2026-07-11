@@ -151,6 +151,18 @@ paths:
         - ADMIN
       security:
         - BearerAuth: []
+      x-validation:
+        crossFields:
+          - name: createdAtRange
+            rule: notAfter
+            left: createdAtFrom
+            right: createdAtTo
+            message: createdAtFrom 不能晚于 createdAtTo
+          - name: updatedAtRange
+            rule: notAfter
+            left: updatedAtFrom
+            right: updatedAtTo
+            message: updatedAtFrom 不能晚于 updatedAtTo
       parameters:
         - name: page
           in: query
@@ -160,6 +172,9 @@ paths:
             type: integer
             minimum: 1
             default: 1
+            x-validation:
+              messages:
+                minimum: 页码不能小于 1
         - name: size
           in: query
           description: 每页条数。
@@ -169,6 +184,10 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
+            x-validation:
+              messages:
+                minimum: 每页条数不能小于 1
+                maximum: 每页条数不能超过 100
         - name: username
           in: query
           description: 用户名筛选，trim 后为空则忽略，按包含匹配处理。
@@ -176,6 +195,9 @@ paths:
           schema:
             type: string
             maxLength: 32
+            x-validation:
+              messages:
+                maxLength: 用户名筛选长度不能超过 32
         - name: email
           in: query
           description: 邮箱筛选，trim 后为空则忽略，转小写后按包含匹配处理。
@@ -183,12 +205,18 @@ paths:
           schema:
             type: string
             maxLength: 128
+            x-validation:
+              messages:
+                maxLength: 邮箱筛选长度不能超过 128
         - name: status
           in: query
           description: 用户状态筛选。
           required: false
           schema:
             $ref: '#/components/schemas/UserStatus'
+            x-validation:
+              messages:
+                enum: 用户状态只能是 ENABLED 或 DISABLED
         - name: createdAtFrom
           in: query
           description: 创建时间起点，格式示例 2026-05-01T00:00:00。
@@ -196,6 +224,9 @@ paths:
           schema:
             type: string
             pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+            x-validation:
+              messages:
+                pattern: createdAtFrom 格式不合法
         - name: createdAtTo
           in: query
           description: 创建时间终点，格式示例 2026-05-18T23:59:59。
@@ -203,6 +234,9 @@ paths:
           schema:
             type: string
             pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+            x-validation:
+              messages:
+                pattern: createdAtTo 格式不合法
         - name: updatedAtFrom
           in: query
           description: 更新时间起点，格式示例 2026-05-01T00:00:00。
@@ -210,6 +244,9 @@ paths:
           schema:
             type: string
             pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+            x-validation:
+              messages:
+                pattern: updatedAtFrom 格式不合法
         - name: updatedAtTo
           in: query
           description: 更新时间终点，格式示例 2026-05-18T23:59:59。
@@ -217,6 +254,9 @@ paths:
           schema:
             type: string
             pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+            x-validation:
+              messages:
+                pattern: updatedAtTo 格式不合法
       responses:
         '200':
           description: 用户摘要分页结果。
@@ -575,18 +615,43 @@ components:
           minLength: 3
           maxLength: 32
           pattern: '^[A-Za-z0-9_]+$'
+          x-validation:
+            notBlank: true
+            messages:
+              required: username 不能为空
+              notBlank: username 不能为空
+              minLength: username 长度必须在 3 到 32 个字符之间
+              maxLength: username 长度必须在 3 到 32 个字符之间
+              pattern: username 只能包含字母、数字和下划线
           example: alice
         email:
           type: string
           description: 邮箱。
           format: email
           maxLength: 128
+          x-validation:
+            notBlank: true
+            messages:
+              required: email 不能为空
+              notBlank: email 不能为空
+              format: email 格式不合法
+              maxLength: email 长度不能超过 128 个字符
           example: alice@example.com
         password:
           type: string
           description: 密码，至少 8 位并同时包含字母和数字。
           minLength: 8
           maxLength: 72
+          x-validation:
+            notBlank: true
+            rules:
+              - name: containsLetterAndDigit
+                message: password 至少包含字母和数字
+            messages:
+              required: password 不能为空
+              notBlank: password 不能为空
+              minLength: password 长度必须在 8 到 72 个字符之间
+              maxLength: password 长度必须在 8 到 72 个字符之间
           example: Password123
     LoginRequest:
       type: object
@@ -599,11 +664,23 @@ components:
           type: string
           description: 用户名或邮箱。
           maxLength: 128
+          x-validation:
+            notBlank: true
+            messages:
+              required: 用户名或邮箱不能为空
+              notBlank: 用户名或邮箱不能为空
+              maxLength: 用户名或邮箱长度不能超过 128 个字符
           example: alice
         password:
           type: string
           description: 密码。
           maxLength: 72
+          x-validation:
+            notBlank: true
+            messages:
+              required: 密码不能为空
+              notBlank: 密码不能为空
+              maxLength: 密码长度不能超过 72 个字符
           example: Password123
     RefreshTokenRequest:
       type: object
@@ -615,6 +692,12 @@ components:
           type: string
           description: 客户端保存的 opaque refresh token。
           maxLength: 128
+          x-validation:
+            notBlank: true
+            messages:
+              required: refreshToken 不能为空
+              notBlank: refreshToken 不能为空
+              maxLength: refreshToken 长度不能超过 128 个字符
     UpdateUserStatusRequest:
       type: object
       description: 更新用户状态请求。
@@ -623,6 +706,10 @@ components:
       properties:
         status:
           $ref: '#/components/schemas/UserStatus'
+          x-validation:
+            messages:
+              required: status 不能为空
+              enum: 用户状态只能是 ENABLED 或 DISABLED
     EchoRequest:
       type: object
       description: 回显示例请求。
@@ -634,11 +721,21 @@ components:
           description: 本次回显的消息内容。
           minLength: 1
           maxLength: 64
+          x-validation:
+            notBlank: true
+            messages:
+              required: message 不能为空
+              notBlank: message 不能为空
+              minLength: message 不能为空
+              maxLength: message 长度不能超过 64
           example: hello eventhub
         tag:
           type: string
           maxLength: 32
           nullable: true
+          x-validation:
+            messages:
+              maxLength: tag 长度不能超过 32
           description: 本次回显附带的可选标签。
           example: bootstrap
     UserStatus:
